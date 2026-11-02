@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+# Startup screen: spinning ASCII cube + live stats on the phone display.
+description="Phone startup screen (cube + stats)"
+command=/usr/local/bin/cube.py
+supervisor=supervise-daemon
+respawn_delay=3
+respawn_max=0
+output_log=/var/log/bootscreen.log
+error_log=/var/log/bootscreen.log
+
+depend() {
+	after mdev usbnet
+}
+
+start_pre() {
+	/usr/local/sbin/screen-on
+}

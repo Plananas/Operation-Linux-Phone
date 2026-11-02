@@ -4,3 +4,7 @@ firmware/extracted/*.tar.md5
 
 # Personal phone storage backup
 backup/sdcard/
+
+# Python caches / third-party clones (re-clone from GitHub)
+__pycache__/
+tools/ext/

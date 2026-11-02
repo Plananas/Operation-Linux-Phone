@@ -17,6 +17,24 @@ mknod -m 644 /dev/kmsg c 1 11 2>/dev/null
 mdev -s
 mkdir -p /dev/pts /dev/shm
 
+# Early TREND OS logo: identical to the first frame of the startup-screen animation.
+# Draw into all 3 framebuffer pages, then early-suspend/late-resume so the display
+# controller scans out /dev/fb0 (not the bootloader's logo copy) with the backlight on.
+if [ -c /dev/fb0 ] && [ -f /logo.rgbx ]; then
+	for p in 0 1 2; do dd if=/logo.rgbx of=/dev/fb0 bs=1536000 seek=$p 2>/dev/null; done
+	echo alpine-keepawake > /sys/power/wake_lock
+	echo mem > /sys/power/state; usleep 300000; echo on > /sys/power/state
+	# wait (max 3 s) until late-resume has woken the display, like Android's surfaceflinger
+	cat /sys/power/wait_for_fb_wake > /dev/null 2>&1 & W=$!
+	i=0; while kill -0 $W 2>/dev/null && [ $i -lt 30 ]; do usleep 100000; i=$((i+1)); done
+	kill $W 2>/dev/null
+	[ -x /bin/fbpan ] && /bin/fbpan 0          # make the controller scan out fb0 (our logo)
+	# loading spin until cube.py takes over (it loads everything, then forks to background)
+	[ -x /bin/bootanim ] && /bin/bootanim /bootanim.bin /dev/.bootanim.pid
+	echo 160 > /sys/class/backlight/panel/brightness
+	touch /dev/.trendos-screen-on      # tells /usr/local/sbin/screen-on not to cycle again
+fi
+
 LOG=/tmp/native-init.log
 log() { echo "native-init: $*" | tee -a $LOG > /dev/kmsg; }
 log "start, kernel $(uname -r)"

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Wake the display the way Android does on this Samsung 3.10 earlysuspend kernel.
+# A wake lock stops the phone ever really suspending (it's a server; also keeps USB/SSH up).
+# mem -> on cycles early-suspend/late-resume: re-inits panel + backlight and makes the
+# display controller scan out /dev/fb0 instead of the bootloader's logo copy.
+# NOTE: never write 0 to backlight brightness - the driver then disables the backlight
+# until the next late-resume.
+echo alpine-keepawake > /sys/power/wake_lock
+if [ -e /dev/.trendos-screen-on ]; then   # ramdisk init already woke the display with the logo
+	exit 0
+fi
+echo mem > /sys/power/state
+sleep 1
+echo on > /sys/power/state
+sleep 1
+echo ${1:-160} > /sys/class/backlight/panel/brightness

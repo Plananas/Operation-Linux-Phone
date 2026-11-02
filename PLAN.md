@@ -87,3 +87,27 @@
 - Every boot with native image: laptop must have `phone-usb` up (automatic) + `sudo tools/pc-share-internet.sh` (after laptop reboot) for phone internet.
 - Known limits: no `adb` in native mode (use SSH/rescue telnet); only root user has network (kernel `CONFIG_ANDROID_PARANOID_NETWORK`: non-root users need gid 3003 `inet`); screen just shows boot logo (no fb terminal yet); Wi-Fi not set up.
 - NEXT: screen (framebuffer `/dev/graphics/fb0` 480x800x32 + touch `/dev/input/event1`) → test drawing → LVGL controller app; Wi-Fi later.
+
+## 🛟 Emergency recovery: Spreadtrum BootROM mode (confirmed 2026-11-02, twice)
+- **Recipe:** phone fully off (pull battery, refit, don't press Power) → **hold Volume Up** → plug USB into laptop → keep holding ~5 s. Screen stays **black**; laptop shows USB `1782:4d00 Spreadtrum Communications Inc.`
+- This is the chip's mask-ROM loader — works even if SPL/SBOOT/everything on eMMC is broken.
+- Volume Down + plug = normal charge-mode boot (not BootROM).
+- Talking to it needs `spd_dump` (github.com/ilyakurdyukov/spreadtrum_flash) + SC8830 FDL1/FDL2 loaders (from any SC8830 .pac; secure boot appears fused off, so unsigned FDLs should be accepted). Status: TODO — handshake / read-only test.
+- Note: `poweroff` with USB connected does NOT stay off — bootloader enters charge mode (battery screen, no Samsung logo) and our init boots TREND OS. Pull battery to really power off.
+
+## 2026-11-02 Screen: TREND OS startup screen
+- Display from Linux: `/dev/fb0` sprdfb 480x800, 32bpp, **byte order R,G,B,X** (driver reports it wrong — use PIL raw mode `RGBX`), 3 pages (virtual 480x2400). Touch `/dev/input/event1` (ist30xx, 480x800), keys event0, accelerometer event3.
+- **Waking the display without Android** (Samsung 3.10 earlysuspend kernel): take wake lock (`echo alpine-keepawake > /sys/power/wake_lock`, also stops real suspend) → `echo mem > /sys/power/state` → `echo on > /sys/power/state` (late resume re-inits panel+backlight) → wait (`/sys/power/wait_for_fb_wake`) → **FBIOPAN_DISPLAY** so the controller scans out fb0 instead of the bootloader's logo copy.
+  - **Never write 0 to `/sys/class/backlight/panel/brightness`** — driver then disables backlight ("mode 0") until next late resume.
+- `cube.py` (`/usr/local/bin`, OpenRC service `bootscreen`, supervise-daemon respawn): numpy ASCII cube (pre-rendered RGBX tiles per face colour x shade, gathered into mmap'd fb, page flip), 30 fps cap (~26% CPU), title + stats panel (CPU %/GHz/°C, RAM, battery %/V/°C, disk, USB net rates, uptime/load/fps), refreshed 1/s. Title "TREND OS" → typewriter transition: backspace, then "Welcome, Robin" typed so it ends centred, cursor disappears after typing.
+- Early boot (all in boot image ramdisk, `boot-native3.img`): init draws `logo.rgbx` (= cube.py `--boot-frame`) into all fb pages, wakes display (above), `fbpan`, then starts `bootanim` (C, `tools/native/bootanim.c`, ~0% CPU): single-axis "loading" spin from pre-rendered frames (`cube.py --boot-anim`), frame = f(CLOCK_MONOTONIC). Survives switch_root. cube.py stops it via `/dev/.bootanim.pid` and continues from the exact same pose, blending into the full tumble over 2.5 s. `/dev/.trendos-screen-on` tells `screen-on` not to re-cycle the display.
+  - Timeline: Samsung logo (bootloader + kernel) → TREND OS at ~5.9 s kernel time (was ~11 s) → cube.py handover ~10 s.
+- `tools/native/fbpan.c` and `bootanim.c` compiled statically on the phone (`apk add gcc musl-dev linux-headers`); binaries kept as `*.armv7-static`.
+- Rebuild boot image: `python3 tools/native/mkramdisk.py tools/native/ramdisk busybox.static out.cpio.gz logo.rgbx=... bin/fbpan=... bin/bootanim=... bootanim.bin=...` then `tools/repack_keep_dt.py boot.img out.cpio.gz boot-nativeN.img`. KERNEL partition (mmcblk0p20) is writable from Linux (dd) — Heimdall only needed if the image doesn't boot.
+
+## 2026-11-02 Boot logo investigation (Samsung logo stays — cannot be changed safely)
+- Power-on logo is **embedded in the bootloader `sboot`** (two copies at 0x76214/0x7beec, 23761 B each, size field follows each JPEG). PARAM partition (`mmcblk0p16`, GNU tar of JPEGs) also has logos but they are NOT used for the power-on screen. PARAM restored to stock (`backup/PARAM-original.bin`).
+- sboot is signed (VLR block, RSA-1024 over 0x180000 bytes). SPL (in `mmcblk0boot0`) loads SBOOT, ROM-verifies it, **falls back to SBOOT2** on failure, hangs if both fail.
+- BootROM handshake (`tools/bootrom_hello.py`) replies **`SPRD3` = secure boot fused OFF**. Our unsigned kernels confirm sboot doesn't enforce.
+- But: eMMC **power-on write protection on group 0 (first 8 MB: SBOOT, SBOOT2, …)** → writes from Linux silently dropped (`mmc writeprotect user get /dev/mmcblk0`). And **Download mode accepts but refuses to write a modified SBOOT** (tried twice, verified by hash: SBOOT unchanged). Route closed; phone unharmed.
+- Backups: `backup/SBOOT-original.bin`, `backup/mmcblk0boot0-SPL-original.bin`, `backup/PARAM-original.bin`. Patch tools kept in `tools/bootlogo/` for reference.
