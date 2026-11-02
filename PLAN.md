@@ -119,3 +119,22 @@
   - DACL/R vol 5 (of 7), SPKL/R vol 10 (of 15, −9 dB), `Inter PA Config` 304, `Speaker Mute` 0, `SPKL Mixer DACL/DACRSPKL Switch` 1, `Speaker Function` 1.
 - Sound: `/usr/local/bin/mksound.py` (numpy synth, ~1.5–2 min on the phone) → `/usr/local/share/trendos/startup.wav` (v2: dark swell + low rush → soft saturated impact + lush A-major pad chord, long dark reverb; HPF 150 Hz for the tiny speaker; chime/impact at 2.6 s). v1 (bell arpeggio, "too ringtone-like") kept as `startup-v1-bells.wav`.
 - Played by cube.py at takeover (once per boot, marker `/run/trendos-sound-played`); swell matches the 2.5 s blend into the full tumble. `bootscreen` start_pre runs `audio-speaker`.
+
+## 2026-11-02 TREND OS shell: launcher + apps + C renderer
+- `cube.py` → **`/usr/local/bin/trendos.py`** (service `bootscreen`). Launcher: each app = spinning ASCII 3D object; swipe left/right (follows finger, snaps with ease-out; >25% width or >700 px/s flick), tap object to open, Back key / Home / tap title to return. Page dots + app label.
+- Touch: `/dev/input/event1` ist30xx, MT protocol B (slots, tracking id), 0–479 × 0–799 = screen px; KEY_BACK on event1, KEY_HOME/POWER on event0. Parsed raw (`struct input_event` = `llHHi`, 16 B on armv7).
+- Apps: **Cube** (empty placeholder), **Calculator** (spinning 3D plus sign; keypad + live preview; safe AST evaluator: numbers, + − × ÷, brackets only; keypad pre-rendered, per-press redraw ~23 ms).
+- Shapes: generic `Shape` (sampled face points grouped by face, normals, centroids, palette per face). Cube (same sampling as boot anim), octahedron, union-of-boxes (plus sign). **Perspective-correct back-face culling** (dot(normal, centre − camera) < 0) + depth buffer — culling by normal.z alone showed back faces.
+- **C renderer `tools/native/render.c` → `/usr/local/lib/trendos/librender.so`** (`gcc -O2 -shared -fPIC … -lm` on the phone), loaded via ctypes; numpy path kept as fallback. `render_draw` renders + blits straight into the framebuffer page; Python erases only last frame's dirty rects per page.
+  - Verified: 0.001% cells differ from numpy (depth ties), blit pixel-identical. Shape maths 1.2–1.3 ms (numpy 7–9 ms), draw 0.6–0.9 ms.
+  - Shell CPU at 30 fps: **~13% of one core** (was ~26% with numpy, ~50% before the earlier optimisations). Swipe frames well under the 33 ms budget.
+- **Flicker/tearing fixes:** sprdfb `FBIOPAN_DISPLAY` returns immediately (switch happens at the next refresh) → after every pan wait with `FBIO_WAITFORVSYNC` (supported, ~62 Hz); **triple buffering** (3 pages, draw into the page shown 2 flips ago); never write to the visible page (stats rows rendered off-screen, copied per page when that page is drawn).
+- **CPU meter fix:** kernel hot-plugs core 1 (sprd_hotplug, touch boost) → aggregate `cpu` line in /proc/stat jumps → nonsense %. Now computed per core over cores online in both samples; stats show `NN% Nc`.
+- **Sleep:** short Power press (or 2 min idle) → `echo mem > /sys/power/state` (earlysuspend: panel/backlight/touch off; wake lock keeps the phone running, SSH stays up); shell stops drawing (select() on input, ~0% CPU). Power/Home → `echo on`, wait `wait_for_fb_wake` (retry once), pan, full redraw.
+- **Power menu:** hold Power ≥0.9 s → Shut down / Restart / Cancel (OpenRC `poweroff` / `reboot`).
+- Debug trick: inject key events by writing `struct input_event` to `/dev/input/event0` (Power/Home/Vol; Back is on event1). Capture the visible screen: read `/dev/fb0` at the `/sys/class/graphics/fb0/pan` y-offset.
+
+## 2026-11-02 Charger mode (power-off while plugged in)
+- Bootloader adds **`androidboot.mode=charger`** to the kernel cmdline when the phone is powered on by a charger (normal boots don't have it). `/etc/local.d/dmesg.start` saves each boot's cmdline to `/var/log/boot-cmdline.log`.
+- Ramdisk init: in charger mode run `/bin/charger` (C, `tools/native/charger.c`, assets `charger.bin` from `mkcharger.py`): TREND OS title, ASCII-"liquid" battery (wave, depth shading, bubbles; green/yellow/red), big %, status line (state, V, °C), "hold power to start". Double-buffered + vsync, ~2% CPU. Screen off after 15 s, short Power = on; **hold Power 1.5 s → continue into normal boot**; **charger unplugged → `poweroff -f`**.
+- Current boot image: **`firmware/extracted/boot-native5.img`** (logo, fbpan, bootanim + frames from trendos.py, charger + assets).

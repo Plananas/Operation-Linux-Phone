@@ -17,6 +17,24 @@ mknod -m 644 /dev/kmsg c 1 11 2>/dev/null
 mdev -s
 mkdir -p /dev/pts /dev/shm
 
+LOG=/tmp/native-init.log
+log() { echo "native-init: $*" | tee -a $LOG > /dev/kmsg; }
+log "start, kernel $(uname -r)"
+
+# Charger mode: the bootloader powered us on because a charger was plugged in.
+# Show the charging screen; Power long-press continues into the normal boot below,
+# unplugging the charger powers off.
+if grep -q 'androidboot.mode=charger' /proc/cmdline && [ -x /bin/charger ]; then
+	log "charger mode"
+	/bin/charger
+	rc=$?
+	log "charger exited ($rc)"
+	if [ $rc -eq 2 ]; then
+		log "charger unplugged: power off"
+		sync; poweroff -f
+	fi
+fi
+
 # Early TREND OS logo: identical to the first frame of the startup-screen animation.
 # Draw into all 3 framebuffer pages, then early-suspend/late-resume so the display
 # controller scans out /dev/fb0 (not the bootloader's logo copy) with the backlight on.
@@ -35,9 +53,6 @@ if [ -c /dev/fb0 ] && [ -f /logo.rgbx ]; then
 	touch /dev/.trendos-screen-on      # tells /usr/local/sbin/screen-on not to cycle again
 fi
 
-LOG=/tmp/native-init.log
-log() { echo "native-init: $*" | tee -a $LOG > /dev/kmsg; }
-log "start, kernel $(uname -r)"
 
 rescue() {
 	log "RESCUE: $*"

@@ -1,0 +1,3 @@
+#!/bin/sh
+dmesg > /var/log/boot-dmesg.log
+cat /proc/cmdline > /var/log/boot-cmdline.log

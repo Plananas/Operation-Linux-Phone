@@ -1,7 +1,7 @@
 #!/sbin/openrc-run
 # Startup screen: spinning ASCII cube + live stats on the phone display.
 description="Phone startup screen (cube + stats)"
-command=/usr/local/bin/cube.py
+command=/usr/local/bin/trendos.py
 supervisor=supervise-daemon
 respawn_delay=3
 respawn_max=0
