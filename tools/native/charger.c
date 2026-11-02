@@ -79,9 +79,16 @@ static void pan_to(int p) {
 	page = p;
 }
 static void pan0(void) { pan_to(page); }
-static void present(void) {                              /* copy buf into the hidden page, flip */
+/* Copy buf into the hidden page and flip. The title and hint never change, so after both pages
+ * have had one full copy only the rows with the battery and the text are copied (~60 %). */
+#define DYN_Y0 110
+#define DYN_Y1 620
+static void present(void) {
+	static int full_copies = 2;
 	int p = page ^ 1;
-	memcpy(fb + (size_t)p * W * H * 4, buf, (size_t)W * H * 4);
+	size_t row = (size_t)W * 4;
+	if (full_copies > 0) { memcpy(fb + (size_t)p * H * row, buf, H * row); full_copies--; }
+	else memcpy(fb + (size_t)p * H * row + DYN_Y0 * row, buf + DYN_Y0 * row, (DYN_Y1 - DYN_Y0) * row);
 	pan_to(p);
 }
 static void screen_off(void) { sysw("/sys/power/state", "mem"); }
@@ -225,7 +232,8 @@ int main(int argc, char **argv) {
 	sysw("/sys/power/wake_lock", "trendos-charger");
 
 	char b[64]; int cap = 0, charging = 1, full = 0, unplugged = 0, on = 1;
-	double volt = 0, temp = 0, t_on = now(), t_stat = -1, down_t = -1;
+	double volt = 0, temp = 0, t_on = now(), t_stat = -1, down_t = -1, t_draw = -1;
+	long last_sig = -1;
 	memset(buf, 0, (size_t)W * H * 4); memset(fb, 0, (size_t)W * H * 4 * 2); page = 0;
 	screen_off(); usleep(300000); screen_on();                      /* leave the bootloader logo */
 	for (;;) {
@@ -241,21 +249,27 @@ int main(int argc, char **argv) {
 			}
 			if (unplugged >= 3) return 2;
 		}
-		if (on) { draw(cap, charging, full, volt, temp, t); present(); }
+		/* redraw: 15 fps while the liquid animates; otherwise only when something shown changed */
+		int animating = charging && !full;
+		long sig = cap * 1000000L + charging * 100000L + full * 10000L + (long)(volt * 100) * 10 + (long)(temp) % 10;
+		if (on && (animating ? t - t_draw >= 1.0 / 15 : sig != last_sig)) {
+			draw(cap, charging, full, volt, temp, t); present();
+			t_draw = t; last_sig = sig;
+		}
 		if (on && t - t_on > 15) { screen_off(); on = 0; }
 		if (down_t >= 0 && t - down_t >= 1.5) {
 			if (!on) screen_on();
-			memset(buf, 0, (size_t)W * H * 4); present();
+			memset(fb, 0, (size_t)W * H * 4 * 2); pan_to(page);   /* blank both pages, boot */
 			return 0;
 		}
 		struct pollfd p = {kfd, POLLIN, 0};
-		poll(&p, 1, on ? 40 : 500);
+		poll(&p, 1, on && charging && !full ? 20 : 250);
 		struct input_event ev;
 		while (kfd >= 0 && read(kfd, &ev, sizeof ev) == sizeof ev) {
 			if (ev.type != EV_KEY || ev.code != KEY_POWER) continue;
 			if (ev.value == 1) down_t = now();
 			else if (ev.value == 0) {
-				if (down_t >= 0 && now() - down_t < 1.5) { if (!on) { screen_on(); on = 1; } t_on = now(); }
+				if (down_t >= 0 && now() - down_t < 1.5) { if (!on) { screen_on(); on = 1; last_sig = -1; } t_on = now(); }
 				down_t = -1;
 			}
 		}

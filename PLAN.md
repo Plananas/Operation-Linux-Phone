@@ -138,3 +138,17 @@
 - Bootloader adds **`androidboot.mode=charger`** to the kernel cmdline when the phone is powered on by a charger (normal boots don't have it). `/etc/local.d/dmesg.start` saves each boot's cmdline to `/var/log/boot-cmdline.log`.
 - Ramdisk init: in charger mode run `/bin/charger` (C, `tools/native/charger.c`, assets `charger.bin` from `mkcharger.py`): TREND OS title, ASCII-"liquid" battery (wave, depth shading, bubbles; green/yellow/red), big %, status line (state, V, °C), "hold power to start". Double-buffered + vsync, ~2% CPU. Screen off after 15 s, short Power = on; **hold Power 1.5 s → continue into normal boot**; **charger unplugged → `poweroff -f`**.
 - Current boot image: **`firmware/extracted/boot-native5.img`** (logo, fbpan, bootanim + frames from trendos.py, charger + assets).
+
+## 2026-11-02 Code layout (refactor) + workflow
+**Phone userland** (`tools/native/alpine-overlay/` mirrors the phone's filesystem):
+- `/usr/local/bin/trendos.py` — entry point (service `bootscreen`); `--boot-frame FILE` / `--boot-anim FILE` export the ramdisk logo + loading-spin frames.
+- `/usr/local/lib/trendos/tos/` — the shell package:
+  `config` (all constants) · `fb` (pages, flip+vsync, sleep/wake) · `gfx` (cached fonts, text, blit) · `render` (tiles, shapes, rotations, C renderer + numpy fallback) · `stats` (sampling + panel) · `title` (typewriter) · `inputdev` (touch/keys) · `launcher` (carousel; entry 0 = home cube, **no app**) · `power` (menu) · `boot` (handover, sound, exports) · `apps/` (`App` base, `calculator`) · `shell` (`Shell` main loop).
+- To add an app: subclass `tos.apps.App` (name, touch, key, render), add an `Entry(shape, colour, app)` in `launcher.default_entries()`.
+- `/usr/local/lib/trendos/librender.so` ← `tools/native/render.c`.
+**Ramdisk / boot image** (`tools/native/`): `ramdisk/init`, `bootanim.c`, `fbpan.c`, `charger.c` (+ `mkcharger.py` assets), `mkramdisk.py`. Static binaries are compiled on the phone (`gcc -static`), kept as `*.armv7-static`.
+**Workflow:**
+- Userland change: `tools/deploy.sh` (copies overlay files, builds librender.so, restarts the shell).
+- Boot image change: build assets on the phone (`trendos.py --boot-anim/--boot-frame`, `mkcharger.py`), `mkramdisk.py … name=path …`, `repack_keep_dt.py boot.img ramdisk.gz boot-nativeN.img`, then `dd` to `mmcblk0p20` (KERNEL) from the phone + verify sha256. Current: **`boot-native6.img`**.
+- UI testing without touching the phone: inject evdev events (write `struct input_event` to `/dev/input/event1` for touch MT-B / Back, `event0` for Power/Home) and capture the visible page from `/dev/fb0` at the `/sys/class/graphics/fb0/pan` offset.
+**Performance (after refactor):** launcher ~11% of one core at 30 fps (stats rows only re-rendered when their content changes; fonts cached; title anim stops scanning when done). Charger: 15 fps while animating, redraw only on change otherwise (~0.1% when full; was ~10%). Refactor verified byte-identical boot assets (logo, 120 spin frames, charger assets) vs the old code.

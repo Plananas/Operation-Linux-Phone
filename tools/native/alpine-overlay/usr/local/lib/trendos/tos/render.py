@@ -1,0 +1,197 @@
+"""ASCII-shaded 3D objects.
+
+Every (palette colour, shade character) pair is pre-rendered once as an RGBX tile. A frame is a
+ROWS x COLS grid of tile indices (0 = empty): rotate, perspective-correct back-face cull,
+project, z-buffer, point-light shade. The C core (librender.so, tools/native/render.c) does this
+and copies the tiles straight into the target buffer; numpy is the fallback/reference.
+"""
+import ctypes, math
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+from .config import (CW, CH, COLS, ROWS, NS, SHADES, PALETTE, LIGHT, CAM_Z, ASPECT, K_BOOT,
+                     FONT_PX, LIBRENDER, BOOT_TILT, BOOT_W)
+from .gfx import font, blit
+
+# ---- tile atlas: tiles[colour * NS + shade] = CH x CW x 4 RGBX --------------------------
+def _make_tiles():
+    t = np.zeros((len(PALETTE) * NS, CH, CW, 4), np.uint8)
+    f = font(FONT_PX)
+    for s, c in enumerate(SHADES):
+        g = Image.new("L", (CW, CH), 0)
+        ImageDraw.Draw(g).text((1, -1), c, fill=255, font=f)
+        mask = np.asarray(g, np.float32)[..., None] / 255.0
+        bright = 0.35 + 0.65 * (s / (NS - 1))                 # denser characters are brighter
+        for col, rgb in enumerate(PALETTE):
+            t[col * NS + s, :, :, :3] = (mask * np.array(rgb, np.float32) * bright).astype(np.uint8)
+    return t
+
+TILES = _make_tiles()
+
+
+# ---- shapes ----------------------------------------------------------------------------------
+class Shape:
+    """Sampled surface points of a solid, grouped by face.
+    pts (N,3), fid (N,) face of each point (non-decreasing), fnrm (F,3) outward normals,
+    fcol (F,) palette index per face."""
+
+    def __init__(self, pts, fid, fnrm, fcol):
+        self.pts = np.ascontiguousarray(pts, np.float32)
+        self.fid = np.ascontiguousarray(fid, np.int32)
+        self.fnrm = np.ascontiguousarray(fnrm, np.float32)
+        self.fcol = np.ascontiguousarray(fcol, np.int32)
+        self.fstart = np.ascontiguousarray(np.searchsorted(self.fid, np.arange(len(self.fnrm) + 1)), np.int32)
+        self.face_idx = [np.arange(self.fstart[i], self.fstart[i + 1]) for i in range(len(self.fnrm))]
+        self.fcen = np.ascontiguousarray([self.pts[ix].mean(0) for ix in self.face_idx], np.float32)
+        self.cptr = tuple(a.ctypes.data for a in (self.pts, self.fid, self.fstart)) + (len(self.fnrm),) + \
+                    tuple(a.ctypes.data for a in (self.fnrm, self.fcen, self.fcol))
+
+
+def make_cube(n=36):
+    """Unit cube (half-size 1), faces coloured PALETTE[0..5]. Same face order and sampling as
+    the boot animation frames, so the boot handover is seamless."""
+    u = (np.arange(n) + 0.5) / n * 2 - 1
+    gu, gv = np.meshgrid(u, u)
+    pts, nrm, fid = [], [], []
+    for axis in range(3):
+        for sign in (-1, 1):
+            p = np.zeros((n * n, 3), np.float32)
+            p[:, axis] = sign
+            p[:, (axis + 1) % 3] = gu.ravel()
+            p[:, (axis + 2) % 3] = gv.ravel()
+            nv = np.zeros(3, np.float32); nv[axis] = sign
+            pts.append(p); nrm.append(nv); fid.append(np.full(n * n, len(fid), np.int32))
+    return Shape(np.concatenate(pts), np.concatenate(fid), nrm, range(6))
+
+
+def make_boxes(boxes, colour_by_axis, density=17):
+    """Union of axis-aligned boxes [(centre, half_sizes)] (z-buffer hides the inner parts).
+    colour_by_axis = palette index for faces normal to (x, y, z)."""
+    pts, fid, nrm, col = [], [], [], []
+    for centre, half in boxes:
+        c, h = np.asarray(centre, np.float32), np.asarray(half, np.float32)
+        for axis in range(3):
+            u, v = (axis + 1) % 3, (axis + 2) % 3
+            nu, nv = max(2, int(2 * h[u] * density)), max(2, int(2 * h[v] * density))
+            gu, gv = np.meshgrid(((np.arange(nu) + 0.5) / nu * 2 - 1) * h[u],
+                                 ((np.arange(nv) + 0.5) / nv * 2 - 1) * h[v])
+            for sign in (-1, 1):
+                p = np.zeros((nu * nv, 3), np.float32)
+                p[:, axis] = sign * h[axis]; p[:, u] = gu.ravel(); p[:, v] = gv.ravel()
+                pts.append(p + c); fid.append(np.full(len(p), len(nrm), np.int32))
+                nvec = np.zeros(3, np.float32); nvec[axis] = sign; nrm.append(nvec)
+                col.append(colour_by_axis[axis])
+    return Shape(np.concatenate(pts), np.concatenate(fid), nrm, col)
+
+
+def make_plus():
+    """3D plus sign: two crossed bars. x faces yellow, y faces white, z faces orange."""
+    return make_boxes([((0, 0, 0), (1.3, 0.42, 0.42)), ((0, 0, 0), (0.42, 1.3, 0.42))],
+                      colour_by_axis=(3, 7, 6))
+
+
+# ---- rotations ---------------------------------------------------------------------------------
+def matrix(tilt, a, b, c):
+    """rot_x(tilt) @ rz(c) @ ry(b) @ rx(a) as 9 floats (row-major), plain Python (no numpy
+    overhead per frame)."""
+    ca, sa, cb, sb, cc, sc = math.cos(a), math.sin(a), math.cos(b), math.sin(b), math.cos(c), math.sin(c)
+    m = [cc * cb, cc * sb * sa - sc * ca, cc * sb * ca + sc * sa,
+         sc * cb, sc * sb * sa + cc * ca, sc * sb * ca - cc * sa,
+         -sb,     cb * sa,                cb * ca]
+    if tilt:
+        ct, st = math.cos(tilt), math.sin(tilt)
+        m[3:] = [ct * m[3] - st * m[6], ct * m[4] - st * m[7], ct * m[5] - st * m[8],
+                 st * m[3] + ct * m[6], st * m[4] + ct * m[7], st * m[5] + ct * m[8]]
+    return m
+
+
+def boot_matrix(t):
+    """Pose of the boot loading spin at monotonic time t."""
+    return matrix(BOOT_TILT, 0.0, BOOT_W * t, 0.0)
+
+
+# ---- numpy reference / fallback ------------------------------------------------------------------
+_LIGHT = np.array(LIGHT, np.float32)
+
+def grid_numpy(m9, shape, K=K_BOOT):
+    """ROWS x COLS tile-index grid (reference implementation; the C core matches it)."""
+    R = np.array(m9, np.float32).reshape(3, 3)
+    fn = shape.fnrm @ R.T
+    fc = shape.fcen @ R.T
+    fc[:, 2] -= CAM_Z
+    vis = np.nonzero(np.einsum("ij,ij->i", fn, fc) < 0)[0]      # faces towards the camera
+    if not len(vis):
+        return np.zeros((ROWS, COLS), np.int32)
+    idx = np.concatenate([shape.face_idx[f] for f in vis])
+    p = shape.pts[idx] @ R.T
+    f = shape.fid[idx]; n = fn[f]
+    ooz = 1.0 / (p[:, 2] - CAM_Z)
+    kz = K * ooz
+    xp = np.clip((COLS / 2 + kz * p[:, 0]).astype(np.int32), 0, COLS - 1)
+    yp = np.clip((ROWS / 2 - kz * p[:, 1] * ASPECT).astype(np.int32), 0, ROWS - 1)
+    ld = _LIGHT - p
+    lum = np.clip(np.einsum("ij,ij->i", n, ld) / np.sqrt(np.einsum("ij,ij->i", ld, ld)), 0, 1)
+    shade = 1 + np.minimum((lum ** 1.3 * (NS - 1)).astype(np.int32), NS - 2)
+    order = np.argsort(ooz)                                      # far -> near, nearest wins
+    grid = np.zeros((ROWS, COLS), np.int32)
+    grid[yp[order], xp[order]] = (shape.fcol[f] * NS + shade)[order]
+    return grid
+
+
+def compose(grid):
+    """Full band image (ROWS*CH x COLS*CW x 4) for a grid."""
+    return TILES[grid].transpose(0, 2, 1, 3, 4).reshape(ROWS * CH, COLS * CW, 4)
+
+
+# ---- C core --------------------------------------------------------------------------------------
+class Renderer:
+    def __init__(self):
+        try:
+            lib = ctypes.CDLL(LIBRENDER)
+            vp, f, i = ctypes.c_void_p, ctypes.c_float, ctypes.c_int
+            lib.render_draw.restype = i
+            lib.render_draw.argtypes = [vp, vp, vp, i, vp, vp, vp,           # shape
+                                        vp, f, i, i, f, f, vp, i,           # R, K, grid, camera, light, ns
+                                        vp, i, i,                           # tiles, ch, cw
+                                        vp, i, i, i, i, i, vp]              # dst, stride, w, h, x, y, rect
+            lib.render_shape.restype = i
+            lib.render_shape.argtypes = [vp, vp, vp, i, vp, vp, vp, vp, f, i, i, f, f, vp, i, vp]
+            self.lib = lib
+        except OSError:
+            self.lib = None
+        self._m9 = (ctypes.c_float * 9)()
+        self._rect = (ctypes.c_int32 * 4)()
+        self._light = np.ascontiguousarray(_LIGHT)
+
+    def draw(self, dst, shape, m9, K, x_off):
+        """Render shape into dst (band-sized RGBX array, pre-cleared where it will draw), shifted
+        x_off px. Returns the touched rect (y0, y1, x0, x1)."""
+        x_off = int(round(x_off))
+        if self.lib is None:
+            g = grid_numpy(m9, shape, K)
+            rows, cols = np.nonzero(g.any(1))[0], np.nonzero(g.any(0))[0]
+            if not len(rows):
+                return (0, 0, 0, 0)
+            r0, r1, c0, c1 = rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
+            img = TILES[g[r0:r1, c0:c1]].transpose(0, 2, 1, 3, 4).reshape((r1 - r0) * CH, (c1 - c0) * CW, 4)
+            return blit(dst, img, r0 * CH, x_off + c0 * CW)
+        self._m9[:] = m9
+        s = shape.cptr
+        self.lib.render_draw(s[0], s[1], s[2], s[3], s[4], s[5], s[6],
+                             ctypes.addressof(self._m9), K, COLS, ROWS, ASPECT, CAM_Z,
+                             self._light.ctypes.data, NS, TILES.ctypes.data, CH, CW,
+                             dst.ctypes.data, dst.strides[0], dst.shape[1], dst.shape[0], x_off, 0,
+                             ctypes.addressof(self._rect))
+        return tuple(self._rect)
+
+    def grid(self, m9, shape, K=K_BOOT):
+        """Tile-index grid (used to export boot animation frames)."""
+        if self.lib is None:
+            return grid_numpy(m9, shape, K)
+        self._m9[:] = m9
+        g = np.empty((ROWS, COLS), np.int32)
+        s = shape.cptr
+        self.lib.render_shape(s[0], s[1], s[2], s[3], s[4], s[5], s[6], ctypes.addressof(self._m9), K,
+                              COLS, ROWS, ASPECT, CAM_Z, self._light.ctypes.data, NS, g.ctypes.data)
+        return g
