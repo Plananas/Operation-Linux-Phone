@@ -46,7 +46,11 @@ CAM_Z = -4.5                       # camera at (0, 0, CAM_Z)
 ASPECT = CW / CH
 K_BOOT = COLS * 1.03               # projection scale of the boot animation
 K_APP = COLS * 0.93                # launcher size (leaves room for label + dots)
-FULL_RATES = (0.9, 0.62, 0.35)     # rad/s about x, y, z in the full tumble
+FULL_RATES = (0.9, 0.62, 0.35)     # rad/s about x, y, z in the full tumble (home cube)
+# App icons sway instead of tumbling, so they stay upright and recognisable: each axis
+# oscillates (amplitude rad, rate rad/s) about a front-facing pose, seen from slightly above.
+APP_SWAY = ((0.36, 1.1), (0.95, 0.8), (0.14, 0.45))    # (amp, rate) for x (nod), y (yaw), z (roll)
+APP_TILT = 0.30
 
 # Boot "loading" spin (played by /bin/bootanim until the shell takes over): spin about the
 # vertical axis, view tilted. Frame k is shown at CLOCK_MONOTONIC t with

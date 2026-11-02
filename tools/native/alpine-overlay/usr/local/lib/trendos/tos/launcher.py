@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETTE, GREEN, ORANGE,
-                     CYAN, K_BOOT, K_APP, BOOT_TILT, BOOT_W, FULL_RATES, SWIPE_FRACTION, SWIPE_FLICK,
+                     CYAN, K_BOOT, K_APP, BOOT_TILT, BOOT_W, FULL_RATES, APP_SWAY, APP_TILT, SWIPE_FRACTION, SWIPE_FLICK,
                      TAP_TIME, DRAG_START)
 from .gfx import canvas, crop_columns, text_strip, to_rgbx, blit
 from .render import make_cube, make_plus, make_settings, make_signal, matrix
@@ -17,11 +17,18 @@ from .apps import CalculatorApp, WifiApp
 class Entry:
     def __init__(self, shape, colour, app=None, opens=None, name=None, phase=(0.0, 0.0, 0.0)):
         self.shape, self.colour, self.app, self.opens = shape, colour, app, opens
-        self.a, self.b, self.c = phase
+        self.a, self.b, self.c = phase       # home cube: tumble angles; apps: sway wave phases
+        self.t = 0.0                         # apps: sway clock
         self.label = None
         text = name or (app.name if app is not None else None)
         if text is not None:
             self.label_x, self.label = crop_columns(text_strip(text, 22, colour, 26))
+
+    def pose(self):
+        """App icon orientation: a gentle sway about facing the viewer (never sideways)."""
+        (ax, wx), (ay, wy), (az, wz) = APP_SWAY
+        return (ax * math.sin(wx * self.t + self.a), ay * math.sin(wy * self.t + self.b),
+                az * math.sin(wz * self.t + self.c))
 
     @property
     def actionable(self):
@@ -142,7 +149,7 @@ class Launcher:
                 en.b += dt * ((1 - blend) * BOOT_W + blend * ry)
                 en.c += dt * blend * rz
             else:
-                en.a += dt * rx; en.b += dt * ry; en.c += dt * rz
+                en.t += dt
 
     # ---- drawing ----
     def _render_entries(self, band, renderer, blend):
@@ -156,9 +163,13 @@ class Launcher:
         for idx, dx in visible:
             en = self.entries[idx]
             home = idx == 0 and self.is_home
-            tilt = BOOT_TILT * (1 - blend) if home else 0.0
-            k = K_BOOT + (K_APP - K_BOOT) * blend if home else K_APP
-            rects.append(renderer.draw(band, en.shape, matrix(tilt, en.a, en.b, en.c), k, dx))
+            if home:
+                m = matrix(BOOT_TILT * (1 - blend), en.a, en.b, en.c)
+                k = K_BOOT + (K_APP - K_BOOT) * blend
+            else:
+                m = matrix(APP_TILT, *en.pose())
+                k = K_APP
+            rects.append(renderer.draw(band, en.shape, m, k, dx))
             if en.label is not None:
                 rects.append(blit(band, en.label, LABEL_Y, dx + en.label_x))
         return [r for r in rects if r[1] > r[0] and r[3] > r[2]]
