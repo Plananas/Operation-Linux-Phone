@@ -50,6 +50,7 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 | `tos/launcher.py` | carousel (`Entry`: app **or** `opens=` sub-menu; `is_home`); home = [welcome cube, Calculator, Settings]; `render_band` for slide snapshots |
 | `tos/transition.py` | `Slide` app open/close animation |
 | `tos/power.py` | animated `PowerMenu` |
+| `tos/keyboard.py` | reusable on-screen keyboard (abc/123/#+= layers, shift, del/space/esc/done); manages its own text buffer; host app draws the field |
 | `tos/stats.py`, `title.py`, `inputdev.py`, `gfx.py`, `boot.py` | stats panel · typewriter title · evdev · fonts/text/blit · handover/sound/exports |
 | `tos/apps/` | `App` base (`touch`, `key`, `render`) · `calculator.py` · `wifi.py` (status + scan, background threads)
 | `tos/transition.py` | `Slide` open/close animation (apps + sub-menus); `live_fn`/`live_side` re-render one side each frame so a carousel keeps spinning while it slides in/out | |
@@ -79,7 +80,7 @@ Perf notes: full-frame ops are **memory-bound** (~13 ms per 480×800 frame that 
 - A sub-menu is just another `Launcher` (`is_home=False`). The shell keeps the home carousel plus the current one; opening a sub-menu or app uses the `Slide` transition (snapshot behind, destination in front). Nav: tap Settings icon → Settings carousel (Wi-Fi icon) → tap → Wi-Fi app. **Back** = up one level (title-tap too); **Home** = straight to the home carousel (`go_home`).
 - New shapes `make_settings` (slider bars) / `make_signal` (Wi-Fi signal bars) via `make_boxes`.
 - Add a setting: add an `Entry(shape, colour, app=…, name=…)` to `settings_entries()`.
-- Wi-Fi app is read-only (status + nearby list; connect a new secured net over SSH — on-screen keyboard TODO).
+- Wi-Fi app: status + nearby list; **tap a network to join it**, typing the password on the on-screen keyboard (`tos/keyboard.py`). Open networks connect on tap. Still works over SSH (`wifi-connect`) too.
 
 ## 6. Dead ends (don't retry)
 - TWRP for this model: not findable. Root via TWRP/SuperSU unnecessary (we own the ramdisk).

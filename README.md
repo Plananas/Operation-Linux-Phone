@@ -22,7 +22,7 @@ time (see *Getting out of trouble*).
 | **Leave it alone 2 minutes** | Screen turns off by itself |
 | **Plug in while switched off** | Charging screen. Hold Power 1.5 s to start TREND OS. Unplug = it switches off |
 
-**Apps so far:** Calculator (the spinning plus sign) and **Settings** (the sliders icon) — swipe to it and tap to open a second carousel of setting icons; **Wi-Fi** is in there, showing your connection, signal and nearby networks.
+**Apps so far:** Calculator (the spinning plus sign) and **Settings** (the sliders icon) — swipe to it and tap to open a second carousel of setting icons; **Wi-Fi** is in there: it shows your connection and nearby networks, and you can **tap a network and type the password on the on-screen keyboard** to join it.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop
@@ -34,8 +34,8 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 - **Internet:** the phone gets its own internet from Wi-Fi — the laptop isn't needed. If you ever
   turn Wi-Fi off and want internet over the cable instead, run `sudo tools/pc-share-internet.sh`
   on the laptop once (shares internet but blocks the phone from the rest of your home network).
-- **Add/Change the Wi-Fi network:** `ssh -t root@192.168.42.129 /usr/local/sbin/wifi-connect`
-  (prompts for name and password; the password stays on the phone).
+- **Add/Change the Wi-Fi network:** easiest on the phone — Settings → Wi-Fi → tap a network → type
+  the password. (Or over SSH: `ssh -t root@192.168.42.129 /usr/local/sbin/wifi-connect`.)
 
 ## Updating TREND OS
 
