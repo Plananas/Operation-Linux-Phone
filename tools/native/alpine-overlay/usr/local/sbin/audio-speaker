@@ -1,0 +1,17 @@
+#!/bin/sh
+# Route ALSA card 0 (sprdphone, HiFi pcm 0) to the loudspeaker, replicating Android's
+# /system/etc/tiny_hw.xml (static path + private fields + "speaker" device on).
+# Usage: audio-speaker [on|off]
+c() { amixer -q -c0 cset name="$1" "$2" 2>/dev/null || echo "audio-speaker: failed: $1=$2" >&2; }
+if [ "$1" = off ]; then
+	c 'Speaker Function' 0; c 'SPKL Mixer DACLSPKL Switch' 0; c 'SPKL Mixer DACRSPKL Switch' 0
+	exit 0
+fi
+c 'VBC Switch' ap          # Android's "arm" = item 'ap' (application CPU), NOT cp0-dsp
+c 'DACL Playback Volume' 5;  c 'DACR Playback Volume' 5
+c 'SPKL Playback Volume' 10; c 'SPKR Playback Volume' 10
+c 'Inter PA Config' 304
+c 'Speaker Mute' 0
+c 'SPKL Mixer DACLSPKL Switch' 1
+c 'SPKL Mixer DACRSPKL Switch' 1
+c 'Speaker Function' 1

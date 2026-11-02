@@ -111,3 +111,11 @@
 - BootROM handshake (`tools/bootrom_hello.py`) replies **`SPRD3` = secure boot fused OFF**. Our unsigned kernels confirm sboot doesn't enforce.
 - But: eMMC **power-on write protection on group 0 (first 8 MB: SBOOT, SBOOT2, …)** → writes from Linux silently dropped (`mmc writeprotect user get /dev/mmcblk0`). And **Download mode accepts but refuses to write a modified SBOOT** (tried twice, verified by hash: SBOOT unchanged). Route closed; phone unharmed.
 - Backups: `backup/SBOOT-original.bin`, `backup/mmcblk0boot0-SPL-original.bin`, `backup/PARAM-original.bin`. Patch tools kept in `tools/bootlogo/` for reference.
+
+## 2026-11-02 Sound: startup sound from Linux (no Android)
+- ALSA works natively: card 0 `sprdphone`, playback `hw:0,0` (HiFi). `apk add alsa-utils` (aplay/amixer).
+- Routing from Android's `/system/etc/tiny_hw.xml` (mount `/dev/mmcblk0p24` ro to read it) → `/usr/local/sbin/audio-speaker [on|off]`:
+  - **`VBC Switch` must be `ap`** (Android's "arm" value = item 2 'ap'). Default/wrong item 'cp0-dsp' sends audio to the modem DSP → aplay "I/O error".
+  - DACL/R vol 5 (of 7), SPKL/R vol 10 (of 15, −9 dB), `Inter PA Config` 304, `Speaker Mute` 0, `SPKL Mixer DACL/DACRSPKL Switch` 1, `Speaker Function` 1.
+- Sound: `/usr/local/bin/mksound.py` (numpy synth, ~1.5–2 min on the phone) → `/usr/local/share/trendos/startup.wav` (v2: dark swell + low rush → soft saturated impact + lush A-major pad chord, long dark reverb; HPF 150 Hz for the tiny speaker; chime/impact at 2.6 s). v1 (bell arpeggio, "too ringtone-like") kept as `startup-v1-bells.wav`.
+- Played by cube.py at takeover (once per boot, marker `/run/trendos-sound-played`); swell matches the 2.5 s blend into the full tumble. `bootscreen` start_pre runs `audio-speaker`.

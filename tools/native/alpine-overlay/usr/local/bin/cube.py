@@ -7,7 +7,7 @@ ready-to-blit RGBX tile. Each frame only computes a grid of tile indices with nu
 (rotate, cull, project, z-buffer, light) and gathers tiles straight into the mmap'd
 framebuffer, then page-flips with FBIOPAN_DISPLAY. Stats panel redraws once a second.
 """
-import fcntl, math, mmap, os, random, time
+import fcntl, math, mmap, os, random, subprocess, time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,6 +33,8 @@ BOOT_W = 2 * math.pi / BOOT_PERIOD
 BLEND = 2.5                        # s to ease from the loading spin into the full tumble
 FULL_RATES = (0.9, 0.62, 0.35)     # rad/s about x, y, z in the full tumble
 BOOTANIM_PID = "/dev/.bootanim.pid"
+SOUND = "/usr/local/share/trendos/startup.wav"   # made by mksound.py; chime lands at 2.6 s
+SOUND_PLAYED = "/run/trendos-sound-played"       # once per boot (not on respawn)
 
 # ---- layout ------------------------------------------------------------------
 FONT_PX, CW, CH = 12, 8, 12        # 60 x 44 cells, rows exactly screen-wide (contiguous)
@@ -296,12 +298,23 @@ def stop_bootanim():
         except OSError:
             break
 
+def play_startup_sound():
+    if not os.path.exists(SOUND) or os.path.exists(SOUND_PLAYED):
+        return
+    try:
+        subprocess.Popen(["aplay", "-q", "-D", "hw:0,0", SOUND],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        open(SOUND_PLAYED, "w").close()
+    except OSError:
+        pass
+
 def main():
     bf = boot_frame()
     for pg in (0, 1):                             # title + 'booting...'; leave the cube area alone
         fbmem[pg][:TOP] = bf[:TOP]
         fbmem[pg][TOP + ROWS * CH:] = bf[TOP + ROWS * CH:]
     stop_bootanim()
+    play_startup_sound()                          # swell matches the blend, chime at full tumble
     stats = Stats()
     start = time.monotonic()
     a, b, c = 0.0, (BOOT_W * start) % (2 * math.pi), 0.0   # continue the loading spin exactly
