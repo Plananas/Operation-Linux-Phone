@@ -45,9 +45,10 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 | `/usr/local/bin/trendos.py` | entry; `--boot-frame F` / `--boot-anim F` export ramdisk assets |
 | `tos/config.py` | every constant (layout, colours, timings, keys, paths) |
 | `tos/fb.py` | `Framebuffer`: pages, `show()` (pan+vsync), `screen_on/off` |
-| `tos/render.py` | tile atlas, `Shape` (cube, boxes/plus), `matrix()`, `Renderer` (C via ctypes, numpy fallback; `scale`/`blend` 2D helpers) |
+| `tos/render.py` | tile atlas, `matrix()`, `Renderer` (C via ctypes, numpy fallback; `scale`/`blend` 2D helpers) |
+| `tos/models/` | 3D model library: `shape.py` (`Shape`, `boxes()`, `extrude()` for 2D silhouettes, `arc()`), `icons.py` (cube, plus, spotify, settings, signal, each `@model(name, colour)`), `get(name)`; preview on the phone with `python3 -m tos.models NAME` |
 | `tos/shell.py` | `Shell` main loop; modes launcher/app/transition/power/halt + asleep |
-| `tos/launcher.py` | carousel (`Entry`: app **or** `opens=` sub-menu; `is_home`); home = [welcome cube, Calculator, Settings]; `render_band` for slide snapshots |
+| `tos/launcher.py` | carousel (`Entry`: app **or** `opens=` sub-menu; `is_home`); home = [welcome cube, Calculator, Spotify (no app yet), Settings]; `render_band` for slide snapshots |
 | `tos/transition.py` | `Slide` app open/close animation |
 | `tos/power.py` | animated `PowerMenu` |
 | `tos/keyboard.py` | reusable on-screen keyboard (abc/123/#+= layers, shift, del/space/esc/done); manages its own text buffer; host app draws the field |
@@ -78,8 +79,8 @@ Perf notes: full-frame ops are **memory-bound** (~13 ms per 480×800 frame that 
 
 ## 5a. Settings / nested carousels
 - A sub-menu is just another `Launcher` (`is_home=False`). The shell keeps the home carousel plus the current one; opening a sub-menu or app uses the `Slide` transition (snapshot behind, destination in front). Nav: tap Settings icon → Settings carousel (Wi-Fi icon) → tap → Wi-Fi app. **Back** = up one level (title-tap too); **Home** = straight to the home carousel (`go_home`).
-- New shapes `make_settings` (slider bars) / `make_signal` (Wi-Fi signal bars) via `make_boxes`.
-- Add a setting: add an `Entry(shape, colour, app=…, name=…)` to `settings_entries()`.
+- Icons are models from `tos/models` (`settings` = slider bars, `signal` = Wi-Fi bars); see the steps in `tos/models/__init__.py` to add one.
+- Add a setting: add an `Entry("model", app=…, name=…)` to `settings_entries()`.
 - Wi-Fi app: status + nearby list; **tap a network to join it**, typing the password on the on-screen keyboard (`tos/keyboard.py`). Open networks connect on tap. Still works over SSH (`wifi-connect`) too.
 
 ## 6. Dead ends (don't retry)

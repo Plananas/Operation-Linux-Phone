@@ -6,23 +6,28 @@ import math
 
 import numpy as np
 
-from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETTE, GREEN, ORANGE,
-                     CYAN, K_BOOT, K_APP, BOOT_TILT, BOOT_W, FULL_RATES, APP_SWAY, APP_TILT, SWIPE_FRACTION, SWIPE_FLICK,
+from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETTE, K_BOOT, K_APP, BOOT_TILT, BOOT_W, FULL_RATES, APP_SWAY, APP_TILT, SWIPE_FRACTION, SWIPE_FLICK,
                      TAP_TIME, DRAG_START)
 from .gfx import canvas, crop_columns, text_strip, to_rgbx, blit
-from .render import make_cube, make_plus, make_settings, make_signal, matrix
+from . import models
+from .render import matrix
 from .apps import CalculatorApp, WifiApp
 
 
 class Entry:
-    def __init__(self, shape, colour, app=None, opens=None, name=None, phase=(0.0, 0.0, 0.0)):
-        self.shape, self.colour, self.app, self.opens = shape, colour, app, opens
+    """One carousel slot: a model from tos.models (by name), what tapping it does (an App to
+    open, or `opens` = a sub-menu name), an optional label (defaults to the app's name) and the
+    sway phase, so neighbouring icons don't move in lockstep."""
+
+    def __init__(self, model, app=None, opens=None, name=None, phase=(0.0, 0.0, 0.0)):
+        self.shape, self.colour = models.get(model), PALETTE[models.colour(model)]
+        self.app, self.opens = app, opens
         self.a, self.b, self.c = phase       # home cube: tumble angles; apps: sway wave phases
         self.t = 0.0                         # apps: sway clock
         self.label = None
         text = name or (app.name if app is not None else None)
         if text is not None:
-            self.label_x, self.label = crop_columns(text_strip(text, 22, colour, 26))
+            self.label_x, self.label = crop_columns(text_strip(text, 22, self.colour, 26))
 
     def pose(self):
         """App icon orientation: a gentle sway about facing the viewer (never sideways)."""
@@ -37,15 +42,16 @@ class Entry:
 
 def default_entries():
     return [
-        Entry(make_cube(), PALETTE[GREEN]),                                         # home: welcome
-        Entry(make_plus(), PALETTE[ORANGE], CalculatorApp(), phase=(0.6, 1.1, 0.3)),
-        Entry(make_settings(), PALETTE[CYAN], opens="settings", name="Settings", phase=(0.3, 0.7, 0.2)),
+        Entry("cube"),                                                  # home: welcome
+        Entry("plus", CalculatorApp(), phase=(0.6, 1.1, 0.3)),
+        Entry("spotify", name="Spotify", phase=(1.2, 0.2, 0.9)),        # app: TODO
+        Entry("settings", opens="settings", name="Settings", phase=(0.3, 0.7, 0.2)),
     ]
 
 
 def settings_entries():
     return [
-        Entry(make_signal(), PALETTE[GREEN], WifiApp(), phase=(0.4, 0.9, 0.2)),
+        Entry("signal", WifiApp(), phase=(0.4, 0.9, 0.2)),
     ]
 
 

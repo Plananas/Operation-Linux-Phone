@@ -1,4 +1,4 @@
-"""ASCII-shaded 3D objects.
+"""ASCII-shaded 3D rendering (the objects themselves live in tos/models).
 
 Every (palette colour, shade character) pair is pre-rendered once as an RGBX tile. A frame is a
 ROWS x COLS grid of tile indices (0 = empty): rotate, perspective-correct back-face cull,
@@ -28,82 +28,6 @@ def _make_tiles():
     return t
 
 TILES = _make_tiles()
-
-
-# ---- shapes ----------------------------------------------------------------------------------
-class Shape:
-    """Sampled surface points of a solid, grouped by face.
-    pts (N,3), fid (N,) face of each point (non-decreasing), fnrm (F,3) outward normals,
-    fcol (F,) palette index per face."""
-
-    def __init__(self, pts, fid, fnrm, fcol):
-        self.pts = np.ascontiguousarray(pts, np.float32)
-        self.fid = np.ascontiguousarray(fid, np.int32)
-        self.fnrm = np.ascontiguousarray(fnrm, np.float32)
-        self.fcol = np.ascontiguousarray(fcol, np.int32)
-        self.fstart = np.ascontiguousarray(np.searchsorted(self.fid, np.arange(len(self.fnrm) + 1)), np.int32)
-        self.face_idx = [np.arange(self.fstart[i], self.fstart[i + 1]) for i in range(len(self.fnrm))]
-        self.fcen = np.ascontiguousarray([self.pts[ix].mean(0) for ix in self.face_idx], np.float32)
-        self.cptr = tuple(a.ctypes.data for a in (self.pts, self.fid, self.fstart)) + (len(self.fnrm),) + \
-                    tuple(a.ctypes.data for a in (self.fnrm, self.fcen, self.fcol))
-
-
-def make_cube(n=36):
-    """Unit cube (half-size 1), faces coloured PALETTE[0..5]. Same face order and sampling as
-    the boot animation frames, so the boot handover is seamless."""
-    u = (np.arange(n) + 0.5) / n * 2 - 1
-    gu, gv = np.meshgrid(u, u)
-    pts, nrm, fid = [], [], []
-    for axis in range(3):
-        for sign in (-1, 1):
-            p = np.zeros((n * n, 3), np.float32)
-            p[:, axis] = sign
-            p[:, (axis + 1) % 3] = gu.ravel()
-            p[:, (axis + 2) % 3] = gv.ravel()
-            nv = np.zeros(3, np.float32); nv[axis] = sign
-            pts.append(p); nrm.append(nv); fid.append(np.full(n * n, len(fid), np.int32))
-    return Shape(np.concatenate(pts), np.concatenate(fid), nrm, range(6))
-
-
-def make_boxes(boxes, colour_by_axis, density=17):
-    """Union of axis-aligned boxes [(centre, half_sizes)] (z-buffer hides the inner parts).
-    colour_by_axis = palette index for faces normal to (x, y, z)."""
-    pts, fid, nrm, col = [], [], [], []
-    for centre, half in boxes:
-        c, h = np.asarray(centre, np.float32), np.asarray(half, np.float32)
-        for axis in range(3):
-            u, v = (axis + 1) % 3, (axis + 2) % 3
-            nu, nv = max(2, int(2 * h[u] * density)), max(2, int(2 * h[v] * density))
-            gu, gv = np.meshgrid(((np.arange(nu) + 0.5) / nu * 2 - 1) * h[u],
-                                 ((np.arange(nv) + 0.5) / nv * 2 - 1) * h[v])
-            for sign in (-1, 1):
-                p = np.zeros((nu * nv, 3), np.float32)
-                p[:, axis] = sign * h[axis]; p[:, u] = gu.ravel(); p[:, v] = gv.ravel()
-                pts.append(p + c); fid.append(np.full(len(p), len(nrm), np.int32))
-                nvec = np.zeros(3, np.float32); nvec[axis] = sign; nrm.append(nvec)
-                col.append(colour_by_axis[axis])
-    return Shape(np.concatenate(pts), np.concatenate(fid), nrm, col)
-
-
-def make_plus():
-    """3D plus sign: two crossed bars. x faces yellow, y faces white, z faces orange."""
-    return make_boxes([((0, 0, 0), (1.3, 0.42, 0.42)), ((0, 0, 0), (0.42, 1.3, 0.42))],
-                      colour_by_axis=(3, 7, 6))
-
-def make_settings():
-    """Settings icon: three stacked horizontal bars (like sliders), cyan."""
-    bars = [((0, 0.62, 0), (1.0, 0.17, 0.22)),
-            ((0, 0.00, 0), (1.0, 0.17, 0.22)),
-            ((0, -0.62, 0), (1.0, 0.17, 0.22))]
-    return make_boxes(bars, colour_by_axis=(5, 5, 5))      # cyan
-
-
-def make_signal():
-    """Wi-Fi icon: four vertical bars of increasing height (signal strength), green."""
-    bars = []
-    for x, hy in ((-0.93, 0.30), (-0.31, 0.55), (0.31, 0.80), (0.93, 1.05)):
-        bars.append(((x, hy - 1.05, 0), (0.18, hy, 0.20)))   # bottoms aligned at y = -1.05
-    return make_boxes(bars, colour_by_axis=(1, 1, 1))     # green
 
 
 # ---- rotations ---------------------------------------------------------------------------------

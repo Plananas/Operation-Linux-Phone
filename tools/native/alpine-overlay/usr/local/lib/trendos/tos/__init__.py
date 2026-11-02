@@ -4,7 +4,8 @@ Modules:
   config    every tunable constant (screen, layout, colours, timings, paths, keys)
   fb        framebuffer pages, page flip + vsync, screen sleep/wake
   gfx       cached fonts, text strips, RGBX conversion, clipped copies
-  render    ASCII tile atlas, 3D shapes, rotations, C renderer (librender.so) + numpy fallback
+  render    ASCII tile atlas, rotations, C renderer (librender.so) + numpy fallback
+  models/   3D model library: Shape, boxes/extrude building blocks, the launcher icons by name
   stats     system stats sampling + the stats panel
   title     typewriter title animation
   inputdev  touchscreen + key events
