@@ -102,7 +102,7 @@ def row_spec(i, s, fps):
         return "DISK", round(f, 2), bar_colour(f), f"{s['disk_used']:.2f} / {s['disk_total']:.1f} GB"
     if i == 4:
         net = "192.168.42.129" if s["link"] == "up" else "usb link down"
-        return "NET", None, None, f"{net}  \u2193{human_rate(s['rx'])} \u2191{human_rate(s['tx'])}"
+        return "NET", None, None, f"{net}  rx{human_rate(s['rx'])}  tx{human_rate(s['tx'])}"
     up = int(s["uptime"])
     return "UP", None, None, (f"{up // 86400}d {up // 3600 % 24:02d}:{up // 60 % 60:02d}:{up % 60:02d}"
                               f"  load {s['load']}  {fps:4.1f}fps")

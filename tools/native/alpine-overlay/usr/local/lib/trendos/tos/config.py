@@ -16,8 +16,12 @@ LIBRENDER = "/usr/local/lib/trendos/librender.so"
 SOUND = "/usr/local/share/trendos/startup.wav"
 SOUND_PLAYED = "/run/trendos-sound-played"         # play once per boot, not on respawn
 BOOTANIM_PID = "/dev/.bootanim.pid"                 # written by the ramdisk's bootanim
-FONT_BOLD = "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf"
-FONT_REG = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf"
+# UI text: VT323, a revival of the DEC VT320 terminal font (one weight, SIL OFL), to match the
+# green-phosphor terminal look. Sizes in the code are DejaVu-equivalent px; gfx.font() scales.
+FONT_UI = "/usr/local/share/trendos/fonts/VT323-Regular.ttf"
+FONT_UI_SCALE = 1.3                # VT323 cap height is 0.56 em vs DejaVu's 0.73 em
+# The ASCII-shaded 3D objects keep DejaVu Sans Mono: SHADES' density ramp is tuned to it.
+FONT_ART = "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf"
 
 # ---- look ----------------------------------------------------------------------------
 TITLE = "TREND OS"

@@ -4,13 +4,37 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .config import W, FONT_BOLD, FONT_REG
+from .config import W, FONT_UI, FONT_UI_SCALE, FONT_ART
+
+
+class _UIFont(ImageFont.FreeTypeFont):
+    """VT323 at FONT_UI_SCALE x the requested size, nudged up so its capitals sit where
+    DejaVu's did (VT323 has a taller ascent), so every existing layout keeps working."""
+
+    def __init__(self, size):
+        super().__init__(FONT_UI, round(size * FONT_UI_SCALE))
+        self.dy = round(size * 0.112)
+
+    def getmask2(self, *args, **kwargs):
+        mask, (x, y) = super().getmask2(*args, **kwargs)
+        return mask, (x, y - self.dy)
+
+    def getbbox(self, *args, **kwargs):
+        l, t, r, b = super().getbbox(*args, **kwargs)
+        return l, t - self.dy, r, b - self.dy
 
 
 @lru_cache(maxsize=None)
 def font(size, bold=True):
-    """Fonts are loaded once and reused (loading a TTF costs milliseconds)."""
-    return ImageFont.truetype(FONT_BOLD if bold else FONT_REG, size)
+    """UI font, loaded once and reused (loading a TTF costs milliseconds). VT323 has a
+    single weight, so `bold` is accepted for compatibility and ignored."""
+    return _UIFont(size)
+
+
+@lru_cache(maxsize=None)
+def art_font(size):
+    """Font for the ASCII-shaded 3D glyph atlas."""
+    return ImageFont.truetype(FONT_ART, size)
 
 
 def to_rgbx(im):

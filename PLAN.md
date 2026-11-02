@@ -53,6 +53,7 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 | `tos/power.py` | animated `PowerMenu` |
 | `tos/keyboard.py` | reusable on-screen keyboard (abc/123/#+= layers, shift, del/space/esc/done); manages its own text buffer; host app draws the field |
 | `tos/stats.py`, `title.py`, `inputdev.py`, `gfx.py`, `boot.py` | stats panel · typewriter title · evdev · fonts/text/blit · handover/sound/exports |
+| `/usr/local/share/trendos/fonts/VT323-Regular.ttf` | UI font (DEC VT320 revival, OFL). `gfx.font(size)` takes DejaVu-equivalent px, scales ×1.3 and shifts up so caps align; single weight, `bold` ignored. **No arrows/geometric glyphs (↓↑○●▶✓)** — use ASCII or draw shapes. 3D ASCII atlas stays on DejaVu (`gfx.art_font`). Boot logo/bootanim/charger (boot image) still DejaVu |
 | `tos/apps/` | `App` base (`touch`, `key`, `render`) · `calculator.py` · `wifi.py` (status + scan, background threads)
 | `tos/transition.py` | `Slide` open/close animation (apps + sub-menus); `live_fn`/`live_side` re-render one side each frame so a carousel keeps spinning while it slides in/out | |
 | `/usr/local/lib/trendos/librender.so` | ← `tools/native/render.c` (3D raster + blit, `scale_bytes`, `blend_rect`) |

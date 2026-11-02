@@ -12,12 +12,12 @@ from PIL import Image, ImageDraw
 
 from .config import (CW, CH, COLS, ROWS, NS, SHADES, PALETTE, LIGHT, CAM_Z, ASPECT, K_BOOT,
                      FONT_PX, LIBRENDER, BOOT_TILT, BOOT_W)
-from .gfx import font, blit
+from .gfx import art_font, blit
 
 # ---- tile atlas: tiles[colour * NS + shade] = CH x CW x 4 RGBX --------------------------
 def _make_tiles():
     t = np.zeros((len(PALETTE) * NS, CH, CW, 4), np.uint8)
-    f = font(FONT_PX)
+    f = art_font(FONT_PX)
     for s, c in enumerate(SHADES):
         g = Image.new("L", (CW, CH), 0)
         ImageDraw.Draw(g).text((1, -1), c, fill=255, font=f)
