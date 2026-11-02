@@ -1,0 +1,6 @@
+# Stock firmware is too big for GitHub (>100MB) - re-download from samfw.com
+firmware/*.zip
+firmware/extracted/*.tar.md5
+
+# Personal phone storage backup
+backup/sdcard/
