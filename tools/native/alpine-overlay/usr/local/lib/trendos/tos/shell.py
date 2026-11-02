@@ -186,9 +186,12 @@ class Shell:
             self.shown["base"][self.page] = base
 
     def carousel_frame(self, carousel, title_text, now):
-        """Full-screen image of a carousel (title + its band) for slide transitions."""
+        """Full-screen image of a carousel (title + its band) for slide transitions. The home
+        greeting is centred (matching the live home title); sub-menu titles are left-aligned
+        next to their back chevron."""
         f = np.zeros((H, W, 4), np.uint8)
-        f[TITLE_Y:TITLE_Y + TITLE_H] = text_strip(title_text, 28, ACCENT, TITLE_H, x=16)
+        x = None if carousel is self.home else 16          # None = centred
+        f[TITLE_Y:TITLE_Y + TITLE_H] = text_strip(title_text, 28, ACCENT, TITLE_H, x=x)
         f[TOP:TOP + BAND] = carousel.render_band(self.renderer)
         return f
 
