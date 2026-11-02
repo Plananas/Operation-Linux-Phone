@@ -16,7 +16,7 @@ from .config import (W, H, NPAGES, TOP, TITLE, TITLE_Y, TITLE_H, BAND, ACCENT, G
 from .fb import Framebuffer
 from .gfx import text_strip
 from .inputdev import Input
-from .launcher import Launcher, default_entries
+from .launcher import Launcher, default_entries, settings_entries
 from .render import Renderer
 from .stats import StatsPanel
 from .title import TitleAnim
@@ -49,7 +49,11 @@ class Shell:
         self.take_over_from_boot()
         now = time.monotonic()
         self.start = self.last = self.last_input = now
-        self.launcher = Launcher(self.entries, now)
+        self.home = Launcher(self.entries, now)
+        self.launcher = self.home            # current carousel (home or a sub-menu)
+        self.carousel_is_home = True
+        self.settings = None                 # built lazily on first open
+        self.home_snap = None                # home screen image, to slide back to from settings
         self.stats = StatsPanel()
         self.title = TitleAnim(TITLE, f"Welcome, {GREET_NAME}")
         self.mode, self.app = "launcher", None
@@ -122,7 +126,7 @@ class Shell:
         if self.mode == "launcher":
             self.launcher.update(now, dt, blend)                      # frozen while not visible
             self.draw_launcher(buf, now, blend)
-            if self.warm and now - self.start > 6 and not self.launcher.busy:
+            if self.warm and self.carousel_is_home and now - self.start > 6 and not self.launcher.busy:
                 self.warm.pop().render(now)       # pre-render one app per frame: instant first open
         elif self.mode == "app":
             self.clear_base(buf, "app")
@@ -180,6 +184,13 @@ class Shell:
             buf[:] = 0
             self.shown["base"][self.page] = base
 
+    def carousel_frame(self, carousel, title_text, now):
+        """Full-screen image of a carousel (title + its band) for slide transitions."""
+        f = np.zeros((H, W, 4), np.uint8)
+        f[TITLE_Y:TITLE_Y + TITLE_H] = text_strip(title_text, 28, ACCENT, TITLE_H, x=16)
+        f[TOP:TOP + BAND] = carousel.render_band(self.renderer)
+        return f
+
     def app_frame(self, app, now):
         """Full-screen image of an app as it will appear (title + app area)."""
         f = np.zeros((H, W, 4), np.uint8)
@@ -209,9 +220,43 @@ class Shell:
 
     def open_app(self, app):
         now = time.monotonic()
-        self.launcher_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()   # frozen launcher
+        self.launcher_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()   # screen we came from
         self.app = app
         self.start_transition(self.launcher_snap, self.app_frame(app, now), True, "app")
+
+    def open_settings(self):
+        now = time.monotonic()
+        if self.settings is None:
+            self.settings = Launcher(settings_entries(), now, is_home=False)
+        self.home_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        self.launcher = self.settings; self.carousel_is_home = False
+        self.launcher.invalidate()
+        self.start_transition(self.home_snap, self.carousel_frame(self.settings, "\u2039 Settings", now),
+                              True, "launcher")
+
+    def close_settings(self):
+        front = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        if self.settings is not None:
+            self.settings.reset_position()
+        self.launcher = self.home; self.carousel_is_home = True
+        self.launcher.invalidate()
+        self.start_transition(self.home_snap, front, False, "launcher")
+
+    def go_home(self):
+        """Jump straight to the home carousel from any app or sub-menu (Home button)."""
+        now = time.monotonic()
+        if self.carousel_is_home and self.app is None:
+            self.launcher.on_home(now)            # already home: just re-centre
+            return
+        front = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        if self.settings is not None:
+            self.settings.reset_position()
+        self.app = None
+        self.home.cur, self.home.off = 0, 0.0
+        self.home.reset_position(); self.home.invalidate()
+        self.launcher = self.home; self.carousel_is_home = True
+        dest = self.carousel_frame(self.home, "Welcome, " + GREET_NAME, now)
+        self.start_transition(dest, front, False, "launcher")
 
     def close_app(self):
         visible = self.fb.pages[(self.page - 1) % NPAGES].copy()
@@ -222,10 +267,14 @@ class Shell:
     def draw_launcher(self, buf, now, blend):
         self.clear_base(buf, "launcher")
         self.launcher.draw(buf, self.page, self.renderer, blend)
-        st = self.title.state(now - self.start)
-        self.draw_title(buf, st, lambda: self.title.render(*st))
-        self.stats.update(now, self.fps, may_render=not self.launcher.busy)   # no stats work mid-swipe
-        self.stats.sync(buf, self.page)
+        if self.carousel_is_home:
+            st = self.title.state(now - self.start)
+            self.draw_title(buf, st, lambda: self.title.render(*st))
+            self.stats.update(now, self.fps, may_render=not self.launcher.busy)
+            self.stats.sync(buf, self.page)
+        else:
+            self.draw_title(buf, ("menu", "Settings"),
+                            lambda: text_strip("\u2039 Settings", 28, ACCENT, TITLE_H, x=16))
 
     # ---- input ---------------------------------------------------------------------------------------
     def handle(self, ev, now):
@@ -243,11 +292,18 @@ class Shell:
         elif self.mode == "launcher":
             if kind == "key":
                 if y == 1 and x == KEY_HOME:
-                    self.launcher.on_home(now)
+                    self.go_home()
+                elif y == 1 and x == KEY_BACK and not self.carousel_is_home:
+                    self.close_settings()
+            elif not self.carousel_is_home and kind == "up" and y < TOP:
+                self.close_settings()                 # tap the "< Settings" title to go back
             else:
-                app = self.launcher.on_touch(kind, x, y, t, now)
-                if app is not None:
-                    self.open_app(app)
+                en = self.launcher.on_touch(kind, x, y, t, now)
+                if en is not None:
+                    if en.app is not None:
+                        self.open_app(en.app)
+                    elif en.opens == "settings":
+                        self.open_settings()
 
     def on_power_key(self, pressed, now):
         """Short press: screen off. Long press (handled in frame()): power menu."""
@@ -259,8 +315,9 @@ class Shell:
             self.power_down_t = None
 
     def on_app(self, kind, x, y):
-        back = (kind == "key" and y == 1 and x in (KEY_BACK, KEY_HOME)) or (kind == "up" and y < TOP)
-        if back:
+        if kind == "key" and y == 1 and x == KEY_HOME:
+            self.go_home()
+        elif (kind == "key" and y == 1 and x == KEY_BACK) or (kind == "up" and y < TOP):
             self.close_app()
         elif kind in ("down", "move", "up"):
             self.app.touch(kind, x, y)

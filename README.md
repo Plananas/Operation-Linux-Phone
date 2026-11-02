@@ -22,7 +22,7 @@ time (see *Getting out of trouble*).
 | **Leave it alone 2 minutes** | Screen turns off by itself |
 | **Plug in while switched off** | Charging screen. Hold Power 1.5 s to start TREND OS. Unplug = it switches off |
 
-**Apps so far:** Calculator (the spinning plus sign).
+**Apps so far:** Calculator (the spinning plus sign) and **Settings** (the sliders icon) — swipe to it and tap to open a second carousel of setting icons; **Wi-Fi** is in there, showing your connection, signal and nearby networks.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop

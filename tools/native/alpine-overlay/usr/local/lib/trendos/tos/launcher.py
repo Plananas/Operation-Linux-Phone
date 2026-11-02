@@ -7,26 +7,38 @@ import math
 import numpy as np
 
 from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETTE, GREEN, ORANGE,
-                     K_BOOT, K_APP, BOOT_TILT, BOOT_W, FULL_RATES, SWIPE_FRACTION, SWIPE_FLICK,
+                     CYAN, K_BOOT, K_APP, BOOT_TILT, BOOT_W, FULL_RATES, SWIPE_FRACTION, SWIPE_FLICK,
                      TAP_TIME, DRAG_START)
 from .gfx import canvas, crop_columns, text_strip, to_rgbx, blit
-from .render import make_cube, make_plus, matrix
-from .apps import CalculatorApp
+from .render import make_cube, make_plus, make_settings, make_signal, matrix
+from .apps import CalculatorApp, WifiApp
 
 
 class Entry:
-    def __init__(self, shape, colour, app=None, phase=(0.0, 0.0, 0.0), label=True):
-        self.shape, self.colour, self.app = shape, colour, app
+    def __init__(self, shape, colour, app=None, opens=None, name=None, phase=(0.0, 0.0, 0.0)):
+        self.shape, self.colour, self.app, self.opens = shape, colour, app, opens
         self.a, self.b, self.c = phase
         self.label = None
-        if app is not None and label:
-            self.label_x, self.label = crop_columns(text_strip(app.name, 22, colour, 26))
+        text = name or (app.name if app is not None else None)
+        if text is not None:
+            self.label_x, self.label = crop_columns(text_strip(text, 22, colour, 26))
+
+    @property
+    def actionable(self):
+        return self.app is not None or self.opens is not None
 
 
 def default_entries():
     return [
-        Entry(make_cube(), PALETTE[GREEN]),                                         # home: no app
+        Entry(make_cube(), PALETTE[GREEN]),                                         # home: welcome
         Entry(make_plus(), PALETTE[ORANGE], CalculatorApp(), phase=(0.6, 1.1, 0.3)),
+        Entry(make_settings(), PALETTE[CYAN], opens="settings", name="Settings", phase=(0.3, 0.7, 0.2)),
+    ]
+
+
+def settings_entries():
+    return [
+        Entry(make_signal(), PALETTE[GREEN], WifiApp(), phase=(0.4, 0.9, 0.2)),
     ]
 
 
@@ -49,15 +61,17 @@ def ease_out(x):
 class Launcher:
     FULL = [(0, BAND, 0, W)]
 
-    def __init__(self, entries, start):
+    def __init__(self, entries, start, is_home=True):
         self.entries = entries
         self.n = len(entries)
+        self.is_home = is_home               # home: entry 0 continues the boot spin + blend
         self.dots = [_dots(self.n, i) for i in range(self.n)]
         self.cur, self.off = 0, 0.0          # off: carousel offset in px (+ = dragged right)
         self.snap = None                     # (from, to, t0, duration)
         self.touch = None
         self.start = start
-        entries[0].b = (BOOT_W * start) % (2 * math.pi)     # continue the boot spin exactly
+        if is_home:
+            entries[0].b = (BOOT_W * start) % (2 * math.pi)     # continue the boot spin exactly
         self.invalidate()
 
     @property
@@ -74,7 +88,7 @@ class Launcher:
 
     # ---- input ----
     def on_touch(self, ev, x, y, t, now):
-        """Returns the app to open (tap on an entry that has one), else None."""
+        """Returns the tapped Entry if it was a tap on an actionable entry, else None."""
         if ev == "down":
             self.touch = {"x0": x, "y0": y, "t0": t, "off0": self.off, "drag": False, "hist": [(t, x)]}
             self.snap = None
@@ -88,10 +102,10 @@ class Launcher:
         elif ev == "up" and self.touch:
             tc, self.touch = self.touch, None
             if not tc["drag"]:
-                app = self.entries[self.cur].app
+                en = self.entries[self.cur]
                 is_tap = t - tc["t0"] < TAP_TIME and TOP <= tc["y0"] < TOP + BAND and abs(self.off) < 1
-                if is_tap and app is not None:
-                    return app
+                if is_tap and en.actionable:
+                    return en
                 self.snap = (self.off, 0.0, now, 0.25)
             else:
                 h = tc["hist"]
@@ -123,7 +137,7 @@ class Launcher:
                 self.off, self.snap = 0.0, None
         rx, ry, rz = FULL_RATES
         for i, en in enumerate(self.entries):
-            if i == 0:
+            if i == 0 and self.is_home:
                 en.a += dt * blend * rx
                 en.b += dt * ((1 - blend) * BOOT_W + blend * ry)
                 en.c += dt * blend * rz
@@ -131,12 +145,8 @@ class Launcher:
                 en.a += dt * rx; en.b += dt * ry; en.c += dt * rz
 
     # ---- drawing ----
-    def draw(self, buf, page, renderer, blend):
-        """Draw into framebuffer page `page` (off screen): erase what was drawn there last time,
-        render the visible object(s) + labels, update the dots if needed."""
-        band = buf[TOP:TOP + BAND]
-        for y0, y1, x0, x1 in self.dirty[page]:
-            band[y0:y1, x0:x1] = 0
+    def _render_entries(self, band, renderer, blend):
+        """Render the visible entrie(s) + labels into a band array. Returns the touched rects."""
         visible = [(self.cur, self.off)]
         if self.off > 0:
             visible.append(((self.cur - 1) % self.n, self.off - W))
@@ -145,13 +155,28 @@ class Launcher:
         rects = []
         for idx, dx in visible:
             en = self.entries[idx]
-            home = idx == 0
+            home = idx == 0 and self.is_home
             tilt = BOOT_TILT * (1 - blend) if home else 0.0
             k = K_BOOT + (K_APP - K_BOOT) * blend if home else K_APP
             rects.append(renderer.draw(band, en.shape, matrix(tilt, en.a, en.b, en.c), k, dx))
             if en.label is not None:
                 rects.append(blit(band, en.label, LABEL_Y, dx + en.label_x))
-        self.dirty[page] = [r for r in rects if r[1] > r[0] and r[3] > r[2]]
+        return [r for r in rects if r[1] > r[0] and r[3] > r[2]]
+
+    def draw(self, buf, page, renderer, blend):
+        """Draw into framebuffer page `page` (off screen): erase what was drawn there last time,
+        render the visible object(s) + labels, update the dots if needed."""
+        band = buf[TOP:TOP + BAND]
+        for y0, y1, x0, x1 in self.dirty[page]:
+            band[y0:y1, x0:x1] = 0
+        self.dirty[page] = self._render_entries(band, renderer, blend)
         if self.dots_shown[page] != self.cur:
             band[DOTS_Y:DOTS_Y + 12] = self.dots[self.cur]
             self.dots_shown[page] = self.cur
+
+    def render_band(self, renderer, blend=1.0):
+        """A fresh band image of the current frame (no page/dirty state) for slide snapshots."""
+        band = np.zeros((BAND, W, 4), np.uint8)
+        self._render_entries(band, renderer, blend)
+        band[DOTS_Y:DOTS_Y + 12] = self.dots[self.cur]
+        return band

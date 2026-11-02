@@ -47,11 +47,12 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 | `tos/fb.py` | `Framebuffer`: pages, `show()` (pan+vsync), `screen_on/off` |
 | `tos/render.py` | tile atlas, `Shape` (cube, boxes/plus), `matrix()`, `Renderer` (C via ctypes, numpy fallback; `scale`/`blend` 2D helpers) |
 | `tos/shell.py` | `Shell` main loop; modes launcher/app/transition/power/halt + asleep |
-| `tos/launcher.py` | carousel (`Entry`, swipe physics); entry 0 = home cube, no app |
+| `tos/launcher.py` | carousel (`Entry`: app **or** `opens=` sub-menu; `is_home`); home = [welcome cube, Calculator, Settings]; `render_band` for slide snapshots |
 | `tos/transition.py` | `Slide` app open/close animation |
 | `tos/power.py` | animated `PowerMenu` |
 | `tos/stats.py`, `title.py`, `inputdev.py`, `gfx.py`, `boot.py` | stats panel · typewriter title · evdev · fonts/text/blit · handover/sound/exports |
-| `tos/apps/` | `App` base (`touch`, `key`, `render`) · `calculator.py` |
+| `tos/apps/` | `App` base (`touch`, `key`, `render`) · `calculator.py` · `wifi.py` (status + scan, background threads)
+| `tos/transition.py` | `Slide` open/close animation (used for apps and sub-menus) | |
 | `/usr/local/lib/trendos/librender.so` | ← `tools/native/render.c` (3D raster + blit, `scale_bytes`, `blend_rect`) |
 | `/etc/init.d/{bootscreen,usbnet}`, `/usr/local/sbin/{screen-on,audio-speaker}` | services / helpers |
 | `/usr/local/bin/mksound.py`, `mkcharger.py` | generate startup.wav / charger.bin |
@@ -73,6 +74,12 @@ Perf notes: full-frame ops are **memory-bound** (~13 ms per 480×800 frame that 
 - **UI tests without hands:** write `input_event`s to event1 (touch: SLOT 0, TRACKING_ID n, X, Y, SYN … TRACKING_ID -1) / event0 (keys); screenshot = read `/dev/fb0` at offset `pan_y*480*4` (`/sys/class/graphics/fb0/pan`). Wake first (inject Home) — fb is EPERM while asleep.
 - **CPU of the shell:** read utime+stime from `/proc/PID/stat` twice, ticks/second = %.
 - **Emergency (BootROM):** battery out/in, hold Vol-Up, plug USB → `1782:4d00`. `tools/bootrom_hello.py` = read-only handshake. Flashing via BootROM needs SC8830 FDL1/FDL2 (not obtained) + spd_dump.
+
+## 5a. Settings / nested carousels
+- A sub-menu is just another `Launcher` (`is_home=False`). The shell keeps the home carousel plus the current one; opening a sub-menu or app uses the `Slide` transition (snapshot behind, destination in front). Nav: tap Settings icon → Settings carousel (Wi-Fi icon) → tap → Wi-Fi app. **Back** = up one level (title-tap too); **Home** = straight to the home carousel (`go_home`).
+- New shapes `make_settings` (slider bars) / `make_signal` (Wi-Fi signal bars) via `make_boxes`.
+- Add a setting: add an `Entry(shape, colour, app=…, name=…)` to `settings_entries()`.
+- Wi-Fi app is read-only (status + nearby list; connect a new secured net over SSH — on-screen keyboard TODO).
 
 ## 6. Dead ends (don't retry)
 - TWRP for this model: not findable. Root via TWRP/SuperSU unnecessary (we own the ramdisk).

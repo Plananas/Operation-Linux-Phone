@@ -90,6 +90,21 @@ def make_plus():
     return make_boxes([((0, 0, 0), (1.3, 0.42, 0.42)), ((0, 0, 0), (0.42, 1.3, 0.42))],
                       colour_by_axis=(3, 7, 6))
 
+def make_settings():
+    """Settings icon: three stacked horizontal bars (like sliders), cyan."""
+    bars = [((0, 0.62, 0), (1.0, 0.17, 0.22)),
+            ((0, 0.00, 0), (1.0, 0.17, 0.22)),
+            ((0, -0.62, 0), (1.0, 0.17, 0.22))]
+    return make_boxes(bars, colour_by_axis=(5, 5, 5))      # cyan
+
+
+def make_signal():
+    """Wi-Fi icon: four vertical bars of increasing height (signal strength), green."""
+    bars = []
+    for x, hy in ((-0.93, 0.30), (-0.31, 0.55), (0.31, 0.80), (0.93, 1.05)):
+        bars.append(((x, hy - 1.05, 0), (0.18, hy, 0.20)))   # bottoms aligned at y = -1.05
+    return make_boxes(bars, colour_by_axis=(1, 1, 1))     # green
+
 
 # ---- rotations ---------------------------------------------------------------------------------
 def matrix(tilt, a, b, c):
