@@ -117,7 +117,7 @@
 - Routing from Android's `/system/etc/tiny_hw.xml` (mount `/dev/mmcblk0p24` ro to read it) → `/usr/local/sbin/audio-speaker [on|off]`:
   - **`VBC Switch` must be `ap`** (Android's "arm" value = item 2 'ap'). Default/wrong item 'cp0-dsp' sends audio to the modem DSP → aplay "I/O error".
   - DACL/R vol 5 (of 7), SPKL/R vol 10 (of 15, −9 dB), `Inter PA Config` 304, `Speaker Mute` 0, `SPKL Mixer DACL/DACRSPKL Switch` 1, `Speaker Function` 1.
-- Sound: `/usr/local/bin/mksound.py` (numpy synth, ~1.5–2 min on the phone) → `/usr/local/share/trendos/startup.wav` (v2: dark swell + low rush → soft saturated impact + lush A-major pad chord, long dark reverb; HPF 150 Hz for the tiny speaker; chime/impact at 2.6 s). v1 (bell arpeggio, "too ringtone-like") kept as `startup-v1-bells.wav`.
+- Sound: `/usr/local/bin/mksound.py` (numpy synth, ~1.5–2 min on the phone) → `/usr/local/share/trendos/startup.wav` (now v4: 6.0 s, cosine fade over the last 2 s, chord/reverb decay a bit faster; previously v2: dark swell + low rush → soft saturated impact + lush A-major pad chord, long dark reverb; HPF 150 Hz for the tiny speaker; chime/impact at 2.6 s). v1 (bell arpeggio, "too ringtone-like") kept as `startup-v1-bells.wav`.
 - Played by cube.py at takeover (once per boot, marker `/run/trendos-sound-played`); swell matches the 2.5 s blend into the full tumble. `bootscreen` start_pre runs `audio-speaker`.
 
 ## 2026-11-02 TREND OS shell: launcher + apps + C renderer
@@ -152,3 +152,11 @@
 - Boot image change: build assets on the phone (`trendos.py --boot-anim/--boot-frame`, `mkcharger.py`), `mkramdisk.py … name=path …`, `repack_keep_dt.py boot.img ramdisk.gz boot-nativeN.img`, then `dd` to `mmcblk0p20` (KERNEL) from the phone + verify sha256. Current: **`boot-native6.img`**.
 - UI testing without touching the phone: inject evdev events (write `struct input_event` to `/dev/input/event1` for touch MT-B / Back, `event0` for Power/Home) and capture the visible page from `/dev/fb0` at the `/sys/class/graphics/fb0/pan` offset.
 **Performance (after refactor):** launcher ~11% of one core at 30 fps (stats rows only re-rendered when their content changes; fonts cached; title anim stops scanning when done). Charger: 15 fps while animating, redraw only on change otherwise (~0.1% when full; was ~10%). Refactor verified byte-identical boot assets (logo, 120 spin frames, charger assets) vs the old code.
+
+## 2026-11-02 Power menu + calculator redesign, transitions
+- **Power menu** (`tos/power.py`, `PowerMenu`): screen behind is frozen + dims to 30%, card fades/slides up, options appear staggered, title types `> power` with cursor. Cancel/Back/Home reverses it (launcher resumes the frozen pose). Shut down/Restart type `> shutting down...`, fade the whole screen to black, then run the command.
+- **Calculator** look: terminal display (history of last 2 sums, `> expression` prompt + blinking cursor, dim live preview → bright `= result`), colour-coded keys (dark digits with top highlight, amber operators, red C/DEL, solid green `=`), pressed keys light up; the typed sum stays visible after `=`.
+- **App open/close transition** (`tos/transition.py`, `Slide`): launcher dims while the app slides up + fades in (0.32 s); closing reverses (0.24 s). Launcher animation is frozen while not visible (saves CPU, seamless return). Taps made while an app slides open are held and replayed to the app; apps are pre-rendered ~6 s after boot so the first open is instant (~364 ms tap→fully visible = the animation).
+- **C helpers** in `render.c`: `scale_bytes` (dim a frame) and `blend_rect` (fade a rect in); librender now built with `-O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4` (CPU has NEON): dimming 1.5 MB 11.8 → 3.3 ms; menu animation frame ~100 → 14 ms. 3D output unchanged (same 17 depth-tie cells of 1.58 M vs numpy).
+- Fixes: screens clear each page once when switching (no remnants from transitions); the shell wakes the display at startup (a restart while the screen was asleep left it unresponsive to Home).
+- Test note: reading `/dev/fb0` (and panning) returns EPERM while the display is asleep — wake it first (inject Home).

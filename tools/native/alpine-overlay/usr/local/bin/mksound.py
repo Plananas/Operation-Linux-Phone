@@ -7,7 +7,7 @@ import sys, wave
 import numpy as np
 
 SR = 44100
-DUR = 7.0
+DUR = 6.0                          # 1 s shorter than v2; swell/impact timing unchanged
 T_HIT = 2.6
 rng = np.random.default_rng(11)
 t = np.arange(int(SR * DUR)) / SR
@@ -51,20 +51,20 @@ thud = noise[0] * on * np.exp(-tt / 0.06) * 0.5              # soft transient
 L += boom + thud; R += boom + thud
 
 # ---- 4. lush sustained chord: A3 E4 A4 C#5 E5, blooms in, slowly darkens ----
-bloom = on * smooth(tt / 0.35) * np.exp(-tt / 2.4)
+bloom = on * smooth(tt / 0.35) * np.exp(-tt / 1.7)
 darken = 900 + 2200 * np.exp(-tt / 1.8)                      # filter slowly closes
 saw_bank([(220.0, 0.55, 0.35), (329.63, 0.5, 0.65), (440.0, 0.45, 0.4),
           (554.37, 0.35, 0.6), (659.26, 0.3, 0.5)], bloom, cutoff=darken, top=4500)
 # airy "choir" layer: soft sines an octave up with slow vibrato
 vib = 1 + 0.003 * np.sin(2 * np.pi * 5.0 * t)
 for f0, pan in ((880.0, 0.3), (1108.73, 0.7), (1318.51, 0.5)):
-    s = 0.12 * np.sin(2 * np.pi * f0 * np.cumsum(vib) / SR) * on * smooth(tt / 0.6) * np.exp(-tt / 2.0)
+    s = 0.12 * np.sin(2 * np.pi * f0 * np.cumsum(vib) / SR) * on * smooth(tt / 0.6) * np.exp(-tt / 1.6)
     L += s * (1 - pan); R += s * pan
 
 # ---- 5. long dark reverb ----
 irn = int(SR * 3.6); ti = np.arange(irn) / SR
 def ir():
-    x = rng.standard_normal(irn) * np.exp(-ti / 1.05); x[:int(0.02 * SR)] = 0
+    x = rng.standard_normal(irn) * np.exp(-ti / 0.9); x[:int(0.02 * SR)] = 0
     X = np.fft.rfft(x); f = np.fft.rfftfreq(irn, 1 / SR); X *= 1 / (1 + (f / 3000) ** 2)   # dark
     x = np.fft.irfft(X, n=irn); return x / np.sqrt((x ** 2).sum())
 n = len(t) + irn
@@ -77,7 +77,8 @@ out = np.stack([L, R])
 spec = np.fft.rfft(out, axis=1); fr = np.fft.rfftfreq(out.shape[1], 1 / SR)
 spec *= 1 / (1 + (150 / np.maximum(fr, 1)) ** 4)
 out = np.fft.irfft(spec, n=out.shape[1], axis=1)
-out *= np.minimum(1, (DUR - t) / 1.5)
+fade = np.clip((DUR - t) / 2.0, 0, 1)               # last 2 s: cosine ease into silence
+out *= 0.5 - 0.5 * np.cos(np.pi * fade)
 out = out / np.abs(out).max() * 0.85
 pcm = (out.T * 32767).astype("<i2")
 w = wave.open(sys.argv[1], "wb"); w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR)

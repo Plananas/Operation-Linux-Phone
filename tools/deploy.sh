@@ -14,7 +14,7 @@ tar -C "$O" --owner=0 --group=0 --exclude=__pycache__ -cf - $FILES | ssh "$HOST"
 scp -q tools/native/render.c "$HOST:/tmp/render.c"
 echo "== building librender.so, restarting the shell"
 ssh "$HOST" 'set -e
-gcc -O2 -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/librender.so /tmp/render.c -lm
+gcc -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/librender.so /tmp/render.c -lm
 rm -f /tmp/render.c
 find /usr/local/lib/trendos -name __pycache__ -type d -exec rm -rf {} +
 rm -f /usr/local/bin/cube.py

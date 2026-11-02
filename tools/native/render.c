@@ -125,3 +125,21 @@ int render_draw(const float *pts, const int32_t *fid, const int32_t *fstart, int
 	rect_out[0] = y0; rect_out[1] = y1; rect_out[2] = x0; rect_out[3] = x1;
 	return cells;
 }
+
+/* dst[i] = src[i] * q / 256 for n bytes (dim a whole frame; q = 0..256). */
+void scale_bytes(uint8_t *dst, const uint8_t *src, int n, int q)
+{
+	for (int i = 0; i < n; i++)
+		dst[i] = (uint8_t)((src[i] * q) >> 8);
+}
+
+/* dst = dst + (src - dst) * a / 256 over a w_bytes x h rectangle (fade src in over dst). */
+void blend_rect(uint8_t *dst, int dst_stride, const uint8_t *src, int src_stride, int w_bytes, int h, int a)
+{
+	for (int y = 0; y < h; y++) {
+		uint8_t *d = dst + (size_t)y * dst_stride;
+		const uint8_t *s = src + (size_t)y * src_stride;
+		for (int x = 0; x < w_bytes; x++)
+			d[x] = (uint8_t)(d[x] + (((int)s[x] - (int)d[x]) * a >> 8));
+	}
+}

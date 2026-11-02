@@ -1,12 +1,15 @@
 """TREND OS shell main loop.
 
 Modes: "launcher" (carousel + stats), "app" (an app owns the area below the title),
-"power" (power menu), "halt" (shutting down). Independently the screen can be asleep.
+"transition" (sliding between launcher and an app), "power" (power menu), "halt" (shutting
+down). Independently the screen can be asleep. The launcher is frozen while not visible.
 
 Each frame draws into the framebuffer page shown 2 flips ago (triple buffering) and remembers
 per page what it drew, so only changed parts are redrawn and the visible page is never touched.
 """
 import select, subprocess, time
+
+import numpy as np
 
 from .config import (W, H, NPAGES, TOP, TITLE, TITLE_Y, TITLE_H, BAND, ACCENT, GREET_NAME, BLEND,
                      MAX_FPS, SLEEP_AFTER, LONG_PRESS, KEY_HOME, KEY_BACK, KEY_POWER)
@@ -18,6 +21,7 @@ from .render import Renderer
 from .stats import StatsPanel
 from .title import TitleAnim
 from . import boot, power
+from .transition import Slide
 
 
 class Shell:
@@ -35,6 +39,9 @@ class Shell:
         for pg in self.fb.pages:
             pg[:TOP] = bf[:TOP]
             pg[TOP + BAND:] = bf[TOP + BAND:]
+        # The display may be asleep if this service was restarted while the screen was off
+        # (e.g. after auto-sleep). Waking an awake display is a no-op, so always do it.
+        self.fb.screen_on(0)
         boot.stop_bootanim()
         boot.play_startup_sound()
 
@@ -48,7 +55,10 @@ class Shell:
         self.mode, self.app = "launcher", None
         self.asleep = False
         self.power_down_t, self.power_handled = None, False
-        self.menu_pressed, self.prev_mode = None, "launcher"
+        self.menu, self.prev_mode = None, "launcher"
+        self.trans, self.trans_target, self.launcher_snap = None, None, None
+        self.held_events = []                 # touches made while an app is sliding open
+        self.warm = [en.app for en in self.entries if en.app is not None]   # apps to pre-render
         self.page, self.frames, self.fps, self.fps_t0 = 1, 0, 0.0, now
         self.shown = {}                                   # region -> per-page "what is drawn"
         self.repaint_all()
@@ -61,7 +71,7 @@ class Shell:
 
     def repaint_all(self):
         """Forget what every page shows, so everything is redrawn on all pages."""
-        self.shown = {k: [None] * NPAGES for k in ("title", "app", "base")}
+        self.shown = {k: [None] * NPAGES for k in ("title", "app", "base", "full")}
         self.launcher.invalidate()
         self.stats.invalidate()
 
@@ -102,14 +112,19 @@ class Shell:
 
         blend = min(1.0, (now - self.start) / BLEND)
         blend = blend * blend * (3 - 2 * blend)                       # smoothstep
-        self.launcher.update(now, dt, blend)
         buf = self.fb.pages[self.page]
+        if self.mode == "power":
+            if not self.draw_power_menu(buf, now):
+                return
+        elif self.mode == "transition":
+            self.draw_transition(buf, now)
         if self.mode == "launcher":
+            self.launcher.update(now, dt, blend)                      # frozen while not visible
             self.draw_launcher(buf, now, blend)
-        elif self.mode == "power":
-            self.draw_region(buf, "app", ("power", self.menu_pressed), lambda: power.render(self.menu_pressed))
-            self.draw_title(buf, ("power",), lambda: text_strip(TITLE, 28, ACCENT, TITLE_H))
-        else:
+            if self.warm and now - self.start > 6 and not self.launcher.busy:
+                self.warm.pop().render(now)       # pre-render one app per frame: instant first open
+        elif self.mode == "app":
+            self.clear_base(buf, "app")
             self.draw_region(buf, "app", self.app.key(now), lambda: self.app.render(now))
             self.draw_title(buf, ("app", self.app.name),
                             lambda: text_strip("‹ " + self.app.name, 28, ACCENT, TITLE_H, x=16))
@@ -138,12 +153,70 @@ class Shell:
             buf[TOP:H] = render()
             self.shown[region][self.page] = key
 
+    def draw_power_menu(self, buf, now):
+        """Returns False if the frame should not be shown (menu just closed / halting)."""
+        if self.menu.done_closing(now):
+            self.mode, self.menu = self.prev_mode, None
+            self.repaint_all()            # launcher/app redraws the frozen frame: seamless
+            return True
+        if self.menu.ready_to_halt(now):  # screen has faded to black
+            subprocess.Popen(["poweroff" if self.menu.action == power.SHUTDOWN else "reboot"])
+            self.mode = "halt"            # OpenRC stops this service on the way down
+            return False
+        key, draw = self.menu.frame(now)
+        if self.shown["full"][self.page] != key:
+            draw(buf)
+            self.shown["full"][self.page] = key
+        return True
+
+    def clear_base(self, buf, base):
+        """Screens only repaint the parts they own; after switching screens clear each page
+        once so nothing of the previous screen (or a transition) is left behind."""
+        if self.shown["base"][self.page] != base:
+            buf[:] = 0
+            self.shown["base"][self.page] = base
+
+    def app_frame(self, app, now):
+        """Full-screen image of an app as it will appear (title + app area)."""
+        f = np.zeros((H, W, 4), np.uint8)
+        f[TITLE_Y:TITLE_Y + TITLE_H] = text_strip("\u2039 " + app.name, 28, ACCENT, TITLE_H, x=16)
+        f[TOP:H] = app.render(now)
+        return f
+
+    def start_transition(self, back, front, opening, target):
+        self.trans = Slide(back, front, self.renderer, time.monotonic(), opening)
+        self.held_events = []
+        self.trans_target, self.mode = target, "transition"
+        self.shown["full"] = [None] * NPAGES
+
+    def draw_transition(self, buf, now):
+        if self.trans.done(now):
+            self.mode, self.trans = self.trans_target, None
+            self.repaint_all()                   # the target screen redraws its final frame
+            held, self.held_events = self.held_events, []
+            if self.mode == "app":               # deliver taps made while it was sliding open
+                for kind, x, y in held:
+                    self.app.touch(kind, x, y)
+            return
+        key = self.trans.key(now)
+        if self.shown["full"][self.page] != key:
+            self.trans.draw(buf, now)
+            self.shown["full"][self.page] = key
+
+    def open_app(self, app):
+        now = time.monotonic()
+        self.launcher_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()   # frozen launcher
+        self.app = app
+        self.start_transition(self.launcher_snap, self.app_frame(app, now), True, "app")
+
+    def close_app(self):
+        visible = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        back = self.launcher_snap if self.launcher_snap is not None else np.zeros_like(visible)
+        self.start_transition(back, visible, False, "launcher")
+        self.app = None
+
     def draw_launcher(self, buf, now, blend):
-        if self.shown["base"][self.page] != "launcher":
-            # coming back from an app/menu: the launcher only repaints the parts it owns
-            # (band, title, stats rows), so clear the whole area below the title once per page
-            buf[TOP:H] = 0
-            self.shown["base"][self.page] = "launcher"
+        self.clear_base(buf, "launcher")
         self.launcher.draw(buf, self.page, self.renderer, blend)
         st = self.title.state(now - self.start)
         self.draw_title(buf, st, lambda: self.title.render(*st))
@@ -158,6 +231,9 @@ class Shell:
             self.on_power_key(y, now)
         elif self.mode == "power":
             self.on_power_menu(kind, x, y)
+        elif self.mode == "transition":
+            if self.trans_target == "app" and kind in ("down", "move", "up") and y >= TOP:
+                self.held_events.append((kind, x, y))     # replayed when the app is open
         elif self.mode == "app":
             self.on_app(kind, x, y)
         elif self.mode == "launcher":
@@ -167,8 +243,7 @@ class Shell:
             else:
                 app = self.launcher.on_touch(kind, x, y, t, now)
                 if app is not None:
-                    self.mode, self.app = "app", app
-                    self.repaint_all()
+                    self.open_app(app)
 
     def on_power_key(self, pressed, now):
         """Short press: screen off. Long press (handled in frame()): power menu."""
@@ -182,43 +257,23 @@ class Shell:
     def on_app(self, kind, x, y):
         back = (kind == "key" and y == 1 and x in (KEY_BACK, KEY_HOME)) or (kind == "up" and y < TOP)
         if back:
-            self.mode, self.app = "launcher", None
-            self.repaint_all()
+            self.close_app()
         elif kind in ("down", "move", "up"):
             self.app.touch(kind, x, y)
 
     def open_power_menu(self):
         if self.mode in ("launcher", "app"):
-            self.prev_mode, self.mode, self.menu_pressed = self.mode, "power", None
-            if self.prev_mode == "launcher":
+            visible = self.fb.pages[(self.page - 1) % NPAGES].copy()      # what is on screen now
+            if self.mode == "launcher" and self.launcher.busy:
                 self.launcher.reset_position()
-
-    def close_power_menu(self):
-        self.mode = self.prev_mode
-        self.repaint_all()
+            self.prev_mode, self.mode = self.mode, "power"
+            self.menu = power.PowerMenu(visible, time.monotonic(), self.renderer)
+            self.shown["full"] = [None] * NPAGES
 
     def on_power_menu(self, kind, x, y):
+        now = time.monotonic()
         if kind == "key":
             if y == 1 and x in (KEY_BACK, KEY_HOME):
-                self.close_power_menu()
-        elif kind == "down":
-            self.menu_pressed = power.button_at(x, y)
-        elif kind == "move":
-            if power.button_at(x, y) != self.menu_pressed:
-                self.menu_pressed = None
-        elif kind == "up":
-            b = power.button_at(x, y)
-            if b is not None and b == self.menu_pressed:
-                if b == power.CANCEL:
-                    self.close_power_menu()
-                else:
-                    self.halt("poweroff" if b == power.SHUTDOWN else "reboot")
-            self.menu_pressed = None
-
-    def halt(self, cmd):
-        msg = power.message("Shutting down..." if cmd == "poweroff" else "Restarting...")
-        for pg in self.fb.pages:
-            pg[:] = msg
-        self.fb.show(self.page)
-        subprocess.Popen([cmd])                       # OpenRC stops this service on the way down
-        self.mode = "halt"
+                self.menu.cancel(now)
+        else:
+            self.menu.touch(kind, x, y, now)

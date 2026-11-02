@@ -157,6 +157,10 @@ class Renderer:
                                         vp, i, i, i, i, i, vp]              # dst, stride, w, h, x, y, rect
             lib.render_shape.restype = i
             lib.render_shape.argtypes = [vp, vp, vp, i, vp, vp, vp, vp, f, i, i, f, f, vp, i, vp]
+            lib.scale_bytes.restype = None
+            lib.scale_bytes.argtypes = [vp, vp, i, i]
+            lib.blend_rect.restype = None
+            lib.blend_rect.argtypes = [vp, i, vp, i, i, i, i]
             self.lib = lib
         except OSError:
             self.lib = None
@@ -184,6 +188,24 @@ class Renderer:
                              dst.ctypes.data, dst.strides[0], dst.shape[1], dst.shape[0], x_off, 0,
                              ctypes.addressof(self._rect))
         return tuple(self._rect)
+
+    # ---- 2D helpers used by overlays (power menu) ----
+    def scale(self, dst, src, q):
+        """dst = src * q (0..1), both contiguous arrays of equal size (dims a frame)."""
+        qi = max(0, min(256, int(q * 256)))
+        if self.lib is None:
+            dst[:] = (src.astype(np.uint16) * qi >> 8).astype(np.uint8)
+            return
+        self.lib.scale_bytes(dst.ctypes.data, src.ctypes.data, src.size, qi)
+
+    def blend(self, dst, src, a):
+        """dst (a view with row stride, e.g. a rect of a page) = dst + (src - dst) * a."""
+        ai = max(0, min(256, int(a * 256)))
+        if self.lib is None:
+            dst[:] = (dst.astype(np.int16) + ((src.astype(np.int16) - dst) * ai >> 8)).astype(np.uint8)
+            return
+        self.lib.blend_rect(dst.ctypes.data, dst.strides[0], src.ctypes.data, src.strides[0],
+                            src.shape[1] * src.shape[2], src.shape[0], ai)
 
     def grid(self, m9, shape, K=K_BOOT):
         """Tile-index grid (used to export boot animation frames)."""
