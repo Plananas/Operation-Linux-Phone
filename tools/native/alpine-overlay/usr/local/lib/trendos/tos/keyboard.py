@@ -57,7 +57,7 @@ class Keyboard:
             y = KB_Y + GAP + r * (KH + GAP)
             for label, wt in row:
                 w = wt * unit
-                rects.append((label, x, int(y), int(w), KH))
+                rects.append((label, int(x), int(y), int(w), KH))
                 x += w + GAP
         self._rects[kkey] = rects
         return rects
