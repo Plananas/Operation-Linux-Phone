@@ -106,3 +106,12 @@ Wi-Fi (bcmdhd, firmware in `/system/etc/wifi`, wpa_supplicant) · more apps · s
 - Credentials: `/etc/wpa_supplicant/wpa_supplicant.conf` (0600, from `wpa_passphrase`). Set up over SSH so the password never goes through the chat.
 - Routing: Wi-Fi default (udhcpc) is preferred; usbnet default is metric 100 (backup). SSH over USB still works (the 192.168.42.0/24 link route stays). Phone no longer needs the laptop for internet.
 - Verified: reboot → auto-connects, internet OK.
+
+## 2026-11-02 Spotify app (browsing works, playback blocked by Spotify)
+- Engine: **go-librespot v0.10.5**, cross-compiled for Alpine/musl/ARMv7 by `tools/spotify/build-go-librespot.sh` (x86 Alpine container + clang targeting an armv7 sysroot of Alpine packages; needs `-no-pie` + lld). Binary `tools/spotify/go-librespot` is gitignored; `deploy.sh` copies it when changed. Runtime libs: `alsa-lib flac-libs mpg123-libs libvorbis libogg`.
+- Service: OpenRC **`spotify`** (supervise-daemon, respawns; an expired pairing code makes it exit → fresh code). Config + saved login: `/var/lib/go-librespot/` (`config.yml` from the overlay, `state.json` holds credentials). API on `127.0.0.1:3678`.
+- Login: `device_auth` — the app shows a code for spotify.com/pair (phone has no browser). Works; credentials persist.
+- App `tos/apps/spotify.py`: pair screen → library (Liked Songs + playlists) → playlist tracks (Play/Shuffle) + docked now-playing panel (prev/play-pause/next, volume).
+- **Blocker:** every track fails with `failed retrieving aes key with code 1` — Spotify refuses the legacy AES audio key to librespot-type clients (tracks, albums, playlists, Liked Songs all refused). Upstream's proper fix ("PlayPlay") is a stub; it would mean circumventing Spotify's DRM, which we don't do. go-librespot issues #279, #235.
+- Dead end: spotifyd 0.4.2 (Alpine package) — Connect-receiver only, no local control API, same key problem.
+- Legitimate routes still open: official web player in Chromium + Widevine (licensed CDM), Spotify remote control (Web API / Connect), local files from the SD card.

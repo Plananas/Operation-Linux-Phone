@@ -8,3 +8,4 @@ backup/sdcard/
 # Python caches / third-party clones (re-clone from GitHub)
 __pycache__/
 tools/ext/
+tools/spotify/go-librespot

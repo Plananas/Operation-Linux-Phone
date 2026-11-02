@@ -1,0 +1,19 @@
+# go-librespot (Spotify player engine) for the TREND OS Spotify app. The app talks to its API on
+# 127.0.0.1:3678; login is device_auth (the app shows a code to enter at spotify.com/pair) and
+# the resulting credentials are saved next to this file in state.json.
+log_level: info
+device_name: TREND OS
+device_type: smartphone
+audio_backend: alsa
+audio_device: plughw:CARD=sprdphone,DEV=0
+bitrate: 160
+initial_volume: 70
+zeroconf_enabled: false
+credentials:
+  type: device_auth
+server:
+  enabled: true
+  address: 127.0.0.1
+  port: 3678
+metadata:
+  enabled: true

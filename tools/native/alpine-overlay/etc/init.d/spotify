@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# Spotify player engine (go-librespot) behind the TREND OS Spotify app.
+# Respawns on exit: an expired pairing code makes it exit, and the restart shows a fresh one.
+description="Spotify player (go-librespot)"
+command=/usr/local/bin/go-librespot
+command_args="--config_dir /var/lib/go-librespot"
+supervisor=supervise-daemon
+respawn_delay=5
+respawn_max=0
+output_log=/var/log/go-librespot.log
+error_log=/var/log/go-librespot.log
+
+depend() {
+	after wifi bootscreen
+}
+
+start_pre() {
+	/usr/local/sbin/audio-speaker
+}
