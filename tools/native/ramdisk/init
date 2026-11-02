@@ -1,0 +1,64 @@
+#!/bin/busybox sh
+# Operation-Linux-Phone native init: boots Alpine from /data/alpine on the stock Samsung kernel.
+# Android is never started. On any failure -> rescue mode (USB network + telnet root shell).
+# To boot Android again: heimdall flash --KERNEL boot.img (stock) or boot-root4.img.
+# To skip Alpine and force rescue: create /data/alpine/.native-disable (from rescue/Android).
+
+export PATH=/bin
+/bin/busybox --install -s /bin
+
+mkdir -p /proc /sys /dev /mnt/data /newroot /tmp
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs -o mode=0755 dev /dev
+mknod -m 600 /dev/console c 5 1 2>/dev/null
+mknod -m 666 /dev/null c 1 3 2>/dev/null
+mknod -m 644 /dev/kmsg c 1 11 2>/dev/null
+mdev -s
+mkdir -p /dev/pts /dev/shm
+
+LOG=/tmp/native-init.log
+log() { echo "native-init: $*" | tee -a $LOG > /dev/kmsg; }
+log "start, kernel $(uname -r)"
+
+rescue() {
+	log "RESCUE: $*"
+	G=/sys/class/android_usb/android0
+	echo 0 > $G/enable; echo 04E8 > $G/idVendor; echo 6864 > $G/idProduct
+	echo rndis > $G/functions; echo 2 > $G/bDeviceClass; echo 1 > $G/enable
+	i=0; while [ ! -e /sys/class/net/rndis0 ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
+	ifconfig lo 127.0.0.1 up
+	ifconfig rndis0 192.168.42.129 netmask 255.255.255.0 up
+	mount -t devpts devpts /dev/pts
+	[ -d /mnt/data/alpine ] && cp $LOG /mnt/data/native-init.log 2>/dev/null
+	telnetd -b 192.168.42.129 -l /bin/sh
+	log "rescue telnet on 192.168.42.129:23"
+	while true; do sleep 3600; done
+}
+
+# Find the userdata partition by its GPT name.
+DEV=""
+for i in 1 2 3 4 5 6 7 8 9 10; do
+	for f in /sys/class/block/*/uevent; do
+		grep -q '^PARTNAME=userdata$' $f && DEV=$(sed -n 's/^DEVNAME=//p' $f)
+	done
+	[ -n "$DEV" ] && [ -b /dev/$DEV ] && break
+	sleep 1; mdev -s
+done
+[ -n "$DEV" ] && [ -b /dev/$DEV ] || rescue "userdata partition not found"
+log "userdata = /dev/$DEV"
+
+mount -t ext4 -o noatime /dev/$DEV /mnt/data || rescue "cannot mount /dev/$DEV"
+R=/mnt/data/alpine
+[ -e $R/.native-disable ] && rescue ".native-disable present"
+[ -x $R/sbin/init ] || rescue "$R/sbin/init missing"
+
+mount --bind $R /newroot || rescue "bind mount failed"
+mkdir -p /newroot/proc /newroot/sys /newroot/dev
+mount --move /dev /newroot/dev
+mount --move /sys /newroot/sys
+mount --move /proc /newroot/proc
+log "switching to Alpine"
+cp $LOG /mnt/data/native-init.log 2>/dev/null
+exec switch_root /newroot /sbin/init
+rescue "switch_root failed"

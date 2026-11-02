@@ -21,7 +21,7 @@
 2. **Backup** – `adb pull /sdcard` for anything you want. Note firmware version (above) and download stock firmware (for unbricking).
 3. **Tools on PC** – `sudo apt install heimdall-flash adb fastboot`. (Heimdall = Linux Odin.)
 4. **Root** – flash TWRP via Heimdall (Download mode: Vol-Down+Home+Power), then flash Magisk/SuperSU zip. Alt: one-click root apps for 4.4 (riskier).
-5. **Debian chroot** – install Linux Deploy (+ BusyBox). Debian `armhf`, image on microSD (≥4 GB), enable SSH. Start → `ssh user@<phone-ip>`.
+5. **Linux chroot** – *(changed 2026-11-02: using **Alpine Linux** in `/data/alpine`, see log; Debian notes kept for reference)* – install Linux Deploy (+ BusyBox). Debian `armhf`, image on microSD (≥4 GB), enable SSH. Start → `ssh user@<phone-ip>`.
 6. **Optimise Android** – disable/uninstall Samsung bloat (`adb shell pm disable-user <pkg>`), keep Wi-Fi on while asleep, wakelock, stay plugged in.
 7. **Server setup** – pick services; set static IP / DHCP reservation on router; autostart chroot on boot.
 8. **Stretch** – if step 1 finds a pmOS/native port, try it later.
@@ -60,3 +60,30 @@
   - Caveat: any app on the phone could connect to localhost:2323 → fine for a dedicated server phone; replace with chroot sshd later.
 - 2026-11-02 **Kingo disabled (kept):** `daemonsu`, `sugote`, `sugote-mksh`, `supolicy` + original `install-recovery.sh` moved to `/system/kingo-disabled/` (mode 0644, not executable). `/system/etc/install-recovery.sh` replaced with a no-op comment. Verified after reboot: no daemonsu running, root shell OK. PC copy (non-exec): `backup/kingo/`. Analysis: rebranded SuperSU fork, no URLs/network sockets; grants root to whatever app is `com.kingouser.com` → risk if that package ever gets installed.
   - Undo: remount /system rw, move files back to /system/xbin (chmod 0755), restore install-recovery.sh.orig.
+- 2026-11-02 **Alpine Linux chroot** (chosen over Debian: ~6 MB vs 1–2 GB, fits internal /data, less RAM):
+  - `firmware/alpine/alpine-minirootfs-3.24.3-armv7.tar.gz` (sha256 `dc1ddfaf…f0c1`, verified against dl-cdn.alpinelinux.org). Extracted as root to **`/data/alpine`** (5.8 MB).
+  - Start script `tools/alpine/alpine-boot.sh` → installed on phone as **`/data/alpine-boot.sh`** (root, 0700). Mounts proc/sys/dev/devpts/shm into the chroot, writes `/etc/resolv.conf` (Android 4.4 has none). Modes: `mount`, `shell` (root shell in Alpine), default = exec `sshd -D` (for an init service).
+  - Verified: chroot runs, `armv7l`, Alpine 3.24.3.
+- 2026-11-02 **USB-only networking (no Wi-Fi, by choice — keep phone local to laptop for now; Wi-Fi later)**:
+  - Control: adb over USB. SSH will go over `adb forward tcp:2222 tcp:22` or the USB link IP.
+  - **Reverse USB tethering** (laptop shares internet to phone):
+    - Phone: as root `setprop sys.usb.config rndis,adb` (must run detached: `busybox setsid sh -c "sleep 2; setprop …" &`, else killed when shell exits) → phone `rndis0`, laptop gets `enx…` interface. Phone: `ifconfig rndis0 192.168.42.129 netmask 255.255.255.0 up; ip route add default via 192.168.42.1 dev rndis0`.
+    - Laptop: NetworkManager connection **`phone-usb`** (`ipv4.method shared`, 192.168.42.1/24, IPv6 off) → NAT + dnsmasq DNS on 192.168.42.1. Created without sudo. Currently bound to `ifname enxbad7f9c2ff11` (may change → TODO check after replug/reboot).
+    - Docker on laptop sets iptables FORWARD policy DROP → `sudo tools/pc-share-internet.sh` adds rules to `DOCKER-USER`: phone → internet allowed, **phone → private/LAN ranges blocked**. Not persistent: re-run after laptop reboot; `off` removes.
+    - Phone↔laptop ping OK, DNS via 192.168.42.1 OK. Internet waiting on the firewall script.
+  - **Not persistent yet:** phone USB mode + rndis0 IP/route reset on phone reboot → TODO add to boot (init service / alpine-boot.sh).
+- 2026-11-02 Firewall script run → phone has internet via laptop; verified phone **cannot** reach home router 192.168.0.1 (LAN block works).
+  - Alpine packages: `openrc busybox-openrc busybox-mdev-openrc openssh e2fsprogs busybox-static` (~16 MB total).
+  - SSH: key-only (laptop `~/.ssh/id_ed25519.pub` → `/root/.ssh/authorized_keys`), `/etc/ssh/sshd_config.d/10-phone.conf`: ListenAddress 192.168.42.129 + 127.0.0.1, no passwords.
+  - Laptop NM `phone-usb` changed to `match.driver rndis_host` (no ifname) — the USB host MAC/interface name is random every boot.
+
+## 🎉 2026-11-02 NATIVE LINUX BOOT WORKS — Android no longer starts
+- **`firmware/extracted/boot-native1.img`** = stock kernel + stock DT + our own ramdisk (built by `tools/native/mkramdisk.py`):
+  - `tools/native/ramdisk/init` (busybox sh) + static busybox (from Alpine `busybox-static`). Mounts proc/sys/tmpfs-/dev, `mdev -s`, finds `PARTNAME=userdata` (mmcblk0p26), mounts it at /mnt/data, bind-mounts `/mnt/data/alpine` and `switch_root`s into Alpine's `/sbin/init` (busybox init + OpenRC). Log: `native-init.log` in root of userdata.
+  - **Rescue mode** on any failure (or if `/data/alpine/.native-disable` exists): USB RNDIS up + `telnet 192.168.42.129` (port 23) root shell.
+- Alpine side: `tools/native/alpine-overlay/etc/init.d/usbnet` (RNDIS gadget via `/sys/class/android_usb`, 192.168.42.129, gw/DNS 192.168.42.1). OpenRC: sysinit devfs mdev sysfs dmesg; boot hostname bootmisc syslog procfs; default usbnet sshd local; shutdown killprocs savecache. getty lines commented out of inittab (kernel has no VT). hostname `phone`. `/etc/local.d/dmesg.start` saves `/var/log/boot-dmesg.log`.
+- Result: `ssh root@192.168.42.129` → PID 1 = Alpine init, **0 Android processes, 21 MB RAM used / 419 MB free**, internet via laptop OK, battery reads + charges (97%, kernel charger driver).
+- **Back to Android:** power off (hold Power ~10 s or pull battery) → Download mode (Vol-Down+Home+Power) → `heimdall flash --KERNEL firmware/extracted/boot-root4.img` (rooted Android) or `boot.img` (stock). Android's /system and /data are untouched (Alpine lives in /data/alpine).
+- Every boot with native image: laptop must have `phone-usb` up (automatic) + `sudo tools/pc-share-internet.sh` (after laptop reboot) for phone internet.
+- Known limits: no `adb` in native mode (use SSH/rescue telnet); only root user has network (kernel `CONFIG_ANDROID_PARANOID_NETWORK`: non-root users need gid 3003 `inet`); screen just shows boot logo (no fb terminal yet); Wi-Fi not set up.
+- NEXT: screen (framebuffer `/dev/graphics/fb0` 480x800x32 + touch `/dev/input/event1`) → test drawing → LVGL controller app; Wi-Fi later.

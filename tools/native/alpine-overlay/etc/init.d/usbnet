@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+# USB network link to the laptop (RNDIS gadget). Phone 192.168.42.129, laptop 192.168.42.1 (NAT + DNS).
+description="USB RNDIS network to laptop"
+G=/sys/class/android_usb/android0
+
+depend() {
+	provide net
+	before sshd
+	after mdev
+}
+
+start() {
+	ebegin "Bringing up USB network"
+	ip link set lo up 2>/dev/null || ifconfig lo 127.0.0.1 up
+	echo 0    > $G/enable
+	echo 04E8 > $G/idVendor
+	echo 6864 > $G/idProduct
+	echo rndis > $G/functions
+	echo 2    > $G/bDeviceClass
+	echo 0    > $G/bDeviceSubClass
+	echo 0    > $G/bDeviceProtocol
+	echo 1    > $G/enable
+	i=0; while [ ! -e /sys/class/net/rndis0 ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
+	ifconfig rndis0 192.168.42.129 netmask 255.255.255.0 up
+	route add default gw 192.168.42.1 dev rndis0 2>/dev/null
+	printf 'nameserver 192.168.42.1\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+	eend $?
+}
+
+stop() {
+	ifconfig rndis0 down 2>/dev/null
+	return 0
+}
