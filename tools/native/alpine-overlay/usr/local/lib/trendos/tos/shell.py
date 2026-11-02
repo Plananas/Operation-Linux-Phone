@@ -61,6 +61,7 @@ class Shell:
         self.power_down_t, self.power_handled = None, False
         self.menu, self.prev_mode = None, "launcher"
         self.trans, self.trans_target, self.launcher_snap = None, None, None
+        self.trans_live = None                 # carousel whose spin advances during a transition
         self.held_events = []                 # touches made while an app is sliding open
         self.warm = [en.app for en in self.entries if en.app is not None]   # apps to pre-render
         self.page, self.frames, self.fps, self.fps_t0 = 1, 0, 0.0, now
@@ -122,7 +123,7 @@ class Shell:
             if not self.draw_power_menu(buf, now):
                 return
         elif self.mode == "transition":
-            self.draw_transition(buf, now)
+            self.draw_transition(buf, now, dt)
         if self.mode == "launcher":
             self.launcher.update(now, dt, blend)                      # frozen while not visible
             self.draw_launcher(buf, now, blend)
@@ -198,13 +199,22 @@ class Shell:
         f[TOP:H] = app.render(now)
         return f
 
-    def start_transition(self, back, front, opening, target):
-        self.trans = Slide(back, front, self.renderer, time.monotonic(), opening)
+    def start_transition(self, back, front, opening, target,
+                         live_carousel=None, live_side=None, live_title=""):
+        """live_carousel keeps spinning during the slide (rendered live on live_side)."""
+        self.trans_live = live_carousel
+        live_fn = None
+        if live_carousel is not None:
+            live_fn = lambda now: self.carousel_frame(live_carousel, live_title, now)
+        self.trans = Slide(back, front, self.renderer, time.monotonic(), opening,
+                           live_fn=live_fn, live_side=live_side)
         self.held_events = []
         self.trans_target, self.mode = target, "transition"
         self.shown["full"] = [None] * NPAGES
 
-    def draw_transition(self, buf, now):
+    def draw_transition(self, buf, now, dt):
+        if self.trans_live is not None:
+            self.trans_live.update(now, dt, 1.0)          # keep its spin advancing
         if self.trans.done(now):
             self.mode, self.trans = self.trans_target, None
             self.repaint_all()                   # the target screen redraws its final frame
@@ -232,7 +242,8 @@ class Shell:
         self.launcher = self.settings; self.carousel_is_home = False
         self.launcher.invalidate()
         self.start_transition(self.home_snap, self.carousel_frame(self.settings, "\u2039 Settings", now),
-                              True, "launcher")
+                              True, "launcher", live_carousel=self.settings, live_side="front",
+                              live_title="\u2039 Settings")
 
     def close_settings(self):
         front = self.fb.pages[(self.page - 1) % NPAGES].copy()
@@ -240,7 +251,9 @@ class Shell:
             self.settings.reset_position()
         self.launcher = self.home; self.carousel_is_home = True
         self.launcher.invalidate()
-        self.start_transition(self.home_snap, front, False, "launcher")
+        self.start_transition(self.home_snap, front, False, "launcher",
+                              live_carousel=self.home, live_side="back",
+                              live_title="Welcome, " + GREET_NAME)
 
     def go_home(self):
         """Jump straight to the home carousel from any app or sub-menu (Home button)."""
@@ -256,12 +269,15 @@ class Shell:
         self.home.reset_position(); self.home.invalidate()
         self.launcher = self.home; self.carousel_is_home = True
         dest = self.carousel_frame(self.home, "Welcome, " + GREET_NAME, now)
-        self.start_transition(dest, front, False, "launcher")
+        self.start_transition(dest, front, False, "launcher", live_carousel=self.home,
+                              live_side="back", live_title="Welcome, " + GREET_NAME)
 
     def close_app(self):
         visible = self.fb.pages[(self.page - 1) % NPAGES].copy()
         back = self.launcher_snap if self.launcher_snap is not None else np.zeros_like(visible)
-        self.start_transition(back, visible, False, "launcher")
+        title = "Welcome, " + GREET_NAME if self.carousel_is_home else "\u2039 Settings"
+        self.start_transition(back, visible, False, "launcher", live_carousel=self.launcher,
+                              live_side="back", live_title=title)
         self.app = None
 
     def draw_launcher(self, buf, now, blend):

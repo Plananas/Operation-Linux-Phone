@@ -52,7 +52,7 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 | `tos/power.py` | animated `PowerMenu` |
 | `tos/stats.py`, `title.py`, `inputdev.py`, `gfx.py`, `boot.py` | stats panel · typewriter title · evdev · fonts/text/blit · handover/sound/exports |
 | `tos/apps/` | `App` base (`touch`, `key`, `render`) · `calculator.py` · `wifi.py` (status + scan, background threads)
-| `tos/transition.py` | `Slide` open/close animation (used for apps and sub-menus) | |
+| `tos/transition.py` | `Slide` open/close animation (apps + sub-menus); `live_fn`/`live_side` re-render one side each frame so a carousel keeps spinning while it slides in/out | |
 | `/usr/local/lib/trendos/librender.so` | ← `tools/native/render.c` (3D raster + blit, `scale_bytes`, `blend_rect`) |
 | `/etc/init.d/{bootscreen,usbnet}`, `/usr/local/sbin/{screen-on,audio-speaker}` | services / helpers |
 | `/usr/local/bin/mksound.py`, `mkcharger.py` | generate startup.wav / charger.bin |
