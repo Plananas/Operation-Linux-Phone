@@ -1,0 +1,12 @@
+#!/bin/sh
+# Bring up the Broadcom wlan0 radio (bcmdhd, built into the kernel). Idempotent.
+# Firmware/nvram copied from Android's /system to /data so we don't depend on that mount.
+FW=/data/wifi
+if [ ! -f "$FW/bcmdhd_sta.bin" ]; then
+	mkdir -p "$FW" /mnt/system
+	mountpoint -q /mnt/system || mount -o ro /dev/mmcblk0p24 /mnt/system
+	cp /mnt/system/etc/wifi/bcmdhd_sta.bin /mnt/system/etc/wifi/nvram_net.txt "$FW/"
+fi
+echo "$FW/bcmdhd_sta.bin" > /sys/module/dhd/parameters/firmware_path
+echo "$FW/nvram_net.txt"  > /sys/module/dhd/parameters/nvram_path
+ip link set wlan0 up 2>/dev/null || ifconfig wlan0 up

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Play the TREND OS startup sound reliably, logging every attempt.
+# Re-applies the speaker routing right before each try: on cold boots the modem's audio stack
+# may grab the audio processor (VBC Switch -> cp0-dsp) after we routed it, and aplay then
+# fails with an I/O error. Retries a few times; the log shows what happened if it still fails.
+F=/usr/local/share/trendos/startup.wav
+L=/var/log/trendos-sound.log
+[ -f "$L" ] && [ "$(wc -c < "$L")" -gt 50000 ] && tail -n 200 "$L" > "$L.tmp" && mv "$L.tmp" "$L"
+log() { echo "$(cut -d' ' -f1 /proc/uptime)s $*" >> "$L"; }
+mix() { amixer -c sprdphone cget name="$1" 2>/dev/null | sed -n 's/.*: values=//p'; }
+log "boot $(date +%F_%T) usb=$(cat /sys/class/power_supply/usb/online 2>/dev/null) ac=$(cat /sys/class/power_supply/ac/online 2>/dev/null)"
+for i in 1 2 3 4 5; do
+	/usr/local/sbin/audio-speaker
+	log "try $i: VBC=$(mix 'VBC Switch') speaker=$(mix 'Speaker Function')"
+	[ $i -eq 1 ] && log "  amixer: $(amixer -c sprdphone cget name='VBC Switch' 2>&1 | tail -1) | /dev/snd: $(ls /dev/snd 2>&1 | tr '\n' ' ')"
+	if out=$(aplay -q -D hw:CARD=sprdphone,DEV=0 "$F" 2>&1); then
+		log "played ok"
+		exit 0
+	fi
+	log "aplay failed: $out"
+	sleep 0.5
+done
+log "gave up"

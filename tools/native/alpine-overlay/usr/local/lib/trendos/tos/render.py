@@ -161,6 +161,8 @@ class Renderer:
             lib.scale_bytes.argtypes = [vp, vp, i, i]
             lib.blend_rect.restype = None
             lib.blend_rect.argtypes = [vp, i, vp, i, i, i, i]
+            lib.slide_frame.restype = None
+            lib.slide_frame.argtypes = [vp, vp, vp, i, i, i, i, i]
             self.lib = lib
         except OSError:
             self.lib = None
@@ -206,6 +208,18 @@ class Renderer:
             return
         self.lib.blend_rect(dst.ctypes.data, dst.strides[0], src.ctypes.data, src.strides[0],
                             src.shape[1] * src.shape[2], src.shape[0], ai)
+
+    def slide(self, dst, back, front, dy, q, a):
+        """Transition frame in one pass: dst = dimmed back (q), with front shifted down dy rows
+        faded in (a). All three full-screen contiguous arrays."""
+        qi, ai = max(0, min(256, int(q * 256))), max(0, min(256, int(a * 256)))
+        if self.lib is None:
+            self.scale(dst, back, q)
+            if dy < dst.shape[0]:
+                self.blend(dst[dy:], front[:dst.shape[0] - dy], a)
+            return
+        self.lib.slide_frame(dst.ctypes.data, back.ctypes.data, front.ctypes.data,
+                             dst.strides[0], dst.shape[0], dy, qi, ai)
 
     def grid(self, m9, shape, K=K_BOOT):
         """Tile-index grid (used to export boot animation frames)."""

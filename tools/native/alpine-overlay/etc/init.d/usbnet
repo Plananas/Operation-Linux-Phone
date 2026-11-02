@@ -22,7 +22,7 @@ start() {
 	echo 1    > $G/enable
 	i=0; while [ ! -e /sys/class/net/rndis0 ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
 	ifconfig rndis0 192.168.42.129 netmask 255.255.255.0 up
-	route add default gw 192.168.42.1 dev rndis0 2>/dev/null
+	ip route add default via 192.168.42.1 dev rndis0 metric 100 2>/dev/null
 	printf 'nameserver 192.168.42.1\nnameserver 1.1.1.1\n' > /etc/resolv.conf
 	eend $?
 }

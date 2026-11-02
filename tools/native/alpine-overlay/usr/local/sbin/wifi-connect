@@ -1,0 +1,42 @@
+#!/bin/sh
+# Connect wlan0 to a Wi-Fi network and remember it for next boot.
+#   wifi-connect              -> prompt for name + password (password not echoed)
+#   wifi-connect "SSID" "pw"  -> non-interactive (open network: omit the password)
+CONF=/etc/wpa_supplicant/wpa_supplicant.conf
+mkdir -p /etc/wpa_supplicant /var/run/wpa_supplicant
+/usr/local/sbin/wifi-up
+SSID="$1"; PSK="$2"
+if [ -z "$SSID" ]; then
+	printf 'Wi-Fi network name: '; read -r SSID
+	printf 'Password (blank = open): '; stty -echo 2>/dev/null; read -r PSK; stty echo 2>/dev/null; echo
+fi
+{
+	echo "ctrl_interface=/var/run/wpa_supplicant"
+	echo "update_config=1"
+	if [ -n "$PSK" ]; then wpa_passphrase "$SSID" "$PSK"
+	else printf 'network={\n\tssid="%s"\n\tkey_mgmt=NONE\n}\n' "$SSID"; fi
+} > "$CONF"
+chmod 600 "$CONF"
+pkill wpa_supplicant 2>/dev/null; sleep 1
+wpa_supplicant -B -i wlan0 -D nl80211 -c "$CONF"
+iw dev wlan0 set power_save off 2>/dev/null          # bcmdhd drops broadcast DHCP with PM on
+printf 'connecting'
+state=""
+for i in $(seq 1 20); do
+	st=$(wpa_cli -i wlan0 status 2>/dev/null | sed -n 's/wpa_state=//p')
+	[ "$st" = COMPLETED ] && { state=ok; break; }
+	wpa_cli -i wlan0 status 2>/dev/null | grep -q "reason=WRONG_KEY" && { state=badkey; break; }
+	printf '.'; sleep 1
+done
+echo
+if [ "$state" = badkey ]; then
+	echo "WRONG PASSWORD for \"$SSID\" — the network was found but the password was rejected. Run again."
+	exit 1
+elif [ "$state" != ok ]; then
+	echo "could not connect to \"$SSID\" (out of range, or wrong password). Run again."
+	exit 1
+fi
+udhcpc -i wlan0 -q -n -t 8 >/dev/null 2>&1
+ip route del default via 192.168.42.1 2>/dev/null    # prefer Wi-Fi for internet; USB keeps SSH
+echo "connected:"; iw dev wlan0 link | grep -E "SSID|signal"; ip -4 addr show wlan0 | grep inet
+if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then echo "internet: OK (via Wi-Fi)"; else echo "internet: no (got Wi-Fi but no DHCP/route)"; fi

@@ -1,8 +1,10 @@
 #!/bin/sh
-# Route ALSA card 0 (sprdphone, HiFi pcm 0) to the loudspeaker, replicating Android's
+# Route the sprdphone ALSA card (HiFi pcm 0) to the loudspeaker, replicating Android's
 # /system/etc/tiny_hw.xml (static path + private fields + "speaker" device on).
+# The card is addressed by NAME: its number changes between boots (the modem's virtual
+# audio cards sometimes register first and take card 0).
 # Usage: audio-speaker [on|off]
-c() { amixer -q -c0 cset name="$1" "$2" 2>/dev/null || echo "audio-speaker: failed: $1=$2" >&2; }
+c() { amixer -q -c sprdphone cset name="$1" "$2" 2>/dev/null || echo "audio-speaker: failed: $1=$2" >&2; }
 if [ "$1" = off ]; then
 	c 'Speaker Function' 0; c 'SPKL Mixer DACLSPKL Switch' 0; c 'SPKL Mixer DACRSPKL Switch' 0
 	exit 0

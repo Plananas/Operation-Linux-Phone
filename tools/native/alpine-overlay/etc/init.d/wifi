@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+description="Wi-Fi: Broadcom wlan0 radio + auto-connect the saved network"
+depend() { after usbnet; }
+start() {
+	ebegin "Starting Wi-Fi (background)"
+	/usr/local/sbin/wifi-autostart >/dev/null 2>&1 &
+	eend 0
+}
+stop() {
+	ebegin "Stopping Wi-Fi"
+	pkill -f "udhcpc -i wlan0" 2>/dev/null
+	pkill wpa_supplicant 2>/dev/null
+	ip link set wlan0 down 2>/dev/null
+	eend 0
+}

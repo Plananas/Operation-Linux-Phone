@@ -1,0 +1,15 @@
+#!/bin/sh
+# Bring up Wi-Fi and connect the saved network. Runs in the background so boot isn't delayed.
+# Keeps power-save off (bcmdhd drops broadcast DHCP otherwise) and holds a renewing DHCP lease.
+/usr/local/sbin/wifi-up
+[ -f /etc/wpa_supplicant/wpa_supplicant.conf ] || exit 0
+pkill wpa_supplicant 2>/dev/null; sleep 1
+wpa_supplicant -B -i wlan0 -D nl80211 -c /etc/wpa_supplicant/wpa_supplicant.conf
+for i in $(seq 1 20); do
+	wpa_cli -i wlan0 status 2>/dev/null | grep -q wpa_state=COMPLETED && break
+	sleep 1
+done
+iw dev wlan0 set power_save off 2>/dev/null
+pkill -f "udhcpc -i wlan0" 2>/dev/null
+udhcpc -i wlan0 -b -t 12 -R >/dev/null 2>&1      # background, keeps the lease renewed
+ip route del default via 192.168.42.1 2>/dev/null  # prefer Wi-Fi; USB default (metric 100) remains as backup

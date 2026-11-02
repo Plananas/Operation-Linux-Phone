@@ -1,11 +1,9 @@
 """Screen transitions (opening / closing an app).
 
 Opening: the screen behind (a snapshot) dims while the new screen fades in and slides up.
-Closing: the same in reverse. Both are drawn straight into the framebuffer page with the C
-helpers (Renderer.scale / Renderer.blend), ~10 ms per frame.
+Closing: the same in reverse. Each frame is one pass of the C helper Renderer.slide (dim the
+back + fade the shifted front in), drawn straight into the framebuffer page.
 """
-from .config import H
-
 OPEN_T, CLOSE_T = 0.32, 0.24
 SLIDE = 48                         # px the foreground slides
 DIM = 0.15                         # background brightness at the end of the transition
@@ -32,10 +30,7 @@ class Slide:
     def draw(self, buf, now):
         k = min(1.0, (now - self.t0) / self.dur)
         e = _ease(k) if self.opening else 1 - _ease(k)      # 0 = only back, 1 = only front
-        self.r.scale(buf, self.back, 1 - (1 - DIM) * e)
-        if e > 0.01:
-            dy = int(SLIDE * (1 - e))
-            if e >= 0.99 and dy == 0:
-                buf[:] = self.front
-            else:
-                self.r.blend(buf[dy:H], self.front[:H - dy], e)
+        if e >= 0.99:
+            buf[:] = self.front
+        else:
+            self.r.slide(buf, self.back, self.front, int(SLIDE * (1 - e)), 1 - (1 - DIM) * e, e)

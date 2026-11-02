@@ -31,7 +31,7 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 
 **Input**: touch `/dev/input/event1` (ist30xx, MT protocol B, slot/tracking-id, coords = screen px; also KEY_BACK 158). Keys `/dev/input/event0` (HOME 102, POWER 116, VOL). `struct input_event` = `llHHi` (16 B).
 
-**Audio**: ALSA card 0 `sprdphone`, `hw:0,0`. Route with `/usr/local/sbin/audio-speaker` (copied from Android `tiny_hw.xml`). **`VBC Switch` must be `ap`** (default `cp0-dsp` → aplay I/O error).
+**Audio**: card `sprdphone`, PCM 0. **Card numbers change between boots** (modem virtual cards `VIRTUAL AUDIO W`, `saudiovoip`, `alli2s` register in random order) → always address it by name: `amixer -c sprdphone`, `aplay -D hw:CARD=sprdphone,DEV=0` (using card 0 sent the sound to a modem card ~1 boot in 3 → silent startup). Route with `/usr/local/sbin/audio-speaker` (from Android `tiny_hw.xml`). **`VBC Switch` must be `ap`** (`cp0-dsp` → aplay I/O error). Startup sound: `/usr/local/sbin/play-startup-sound` (re-routes, retries, logs to `/var/log/trendos-sound.log`).
 
 **CPU stats**: core 1 hot-plugs (touch boost) → aggregate `cpu` line of /proc/stat jumps; compute per core.
 
@@ -58,7 +58,8 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 
 Ramdisk (`tools/native/`): `ramdisk/init` · `bootanim.c` (loading spin, frame = f(CLOCK_MONOTONIC), stopped by shell via `/dev/.bootanim.pid`) · `fbpan.c` · `charger.c` · binaries `*.armv7-static`.
 New app: subclass `App`, add `Entry(shape, colour, app)` in `launcher.default_entries()`.
-Rendering rules: shell redraws a region per page only when its key changes; per-page dirty rects; screens clear each page once on switch (`shown["base"]`).
+Rendering rules: shell redraws a region per page only when its key changes, rendering once per key and copying to the other pages (`_region_cache`); per-page dirty rects; screens clear each page once on switch (`shown["base"]`).
+Perf notes: full-frame ops are **memory-bound** (~13 ms per 480×800 frame that reads 2 frames + writes 1; explicit NEON was no faster) → transitions cost ~40–60 % CPU for their 0.3 s; idle app ≈ one render per cursor blink. Measure with 100 ms `/proc/PID/stat` sampling (`utime+stime`).
 
 ## 5. Procedures
 - **Userland deploy:** `tools/deploy.sh` (tar overlay → phone, build librender `-O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4`, restart shell).
@@ -87,3 +88,12 @@ Wi-Fi (bcmdhd, firmware in `/system/etc/wifi`, wpa_supplicant) · more apps · s
 
 ## 9. History (one line per milestone)
 `11aec19` root via ramdisk telnet service, DT-preserving repack · `7aae2ea` native Alpine boot, USB tethering, SSH · `dec2b87` startup screen, boot animation, boot-logo investigation · `ec20b35` startup sound · `9a4d218` launcher, calculator, C renderer, sleep, power menu, charger mode · `639f59a` refactor into `tos` package · `4cfe591` animated power menu, calculator redesign, transitions, sound v4.
+
+## 2026-11-02 Wi-Fi (Broadcom bcmdhd, native)
+- `wlan0` + driver are built into the kernel; firmware in Android's `/system/etc/wifi` (`bcmdhd_sta.bin`, `nvram_net.txt`). `cfg80211`/`phy0` present → **nl80211 only** (wext unsupported).
+- Bring-up: copy firmware to `/data/wifi`, set `/sys/module/dhd/parameters/{firmware_path,nvram_path}`, `ip link set wlan0 up` → firmware loads (`/usr/local/sbin/wifi-up`). No stored MAC (`.mac.info` missing) → default Broadcom MAC `00:90:4c:…` (fine).
+- Connect: `wpa_supplicant -D nl80211` + `udhcpc`. **Must `iw dev wlan0 set power_save off`** or bcmdhd drops the broadcast DHCP reply (lease never arrives). Scan with `iw dev wlan0 scan`.
+- Tooling: `apk add wpa_supplicant iw`. Helpers: `wifi-up`, `wifi-connect` (prompts for SSID/password, hidden; wrong password → reason 15 `4WAY_HANDSHAKE_TIMEOUT` = WRONG_KEY, reported clearly), `wifi-autostart` + OpenRC **`wifi`** service (auto-connects saved net on boot, background so boot isn't delayed).
+- Credentials: `/etc/wpa_supplicant/wpa_supplicant.conf` (0600, from `wpa_passphrase`). Set up over SSH so the password never goes through the chat.
+- Routing: Wi-Fi default (udhcpc) is preferred; usbnet default is metric 100 (backup). SSH over USB still works (the 192.168.42.0/24 link route stays). Phone no longer needs the laptop for internet.
+- Verified: reboot → auto-connects, internet OK.

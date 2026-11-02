@@ -143,3 +143,22 @@ void blend_rect(uint8_t *dst, int dst_stride, const uint8_t *src, int src_stride
 			d[x] = (uint8_t)(d[x] + (((int)s[x] - (int)d[x]) * a >> 8));
 	}
 }
+
+/* One pass of the app open/close transition (dim the back + fade the shifted front in):
+ *   rows < dy :  dst = back * q
+ *   rows >= dy:  dst = (back * q) * (1 - a) + front[row - dy] * a        (q, a in 0..256)
+ * Memory-bound on this SoC (~13 ms per 480x800 frame: reads 2 frames, writes 1); an explicit
+ * NEON version was measured and was no faster, so this stays plain and exact. */
+void slide_frame(uint8_t *dst, const uint8_t *back, const uint8_t *front, int row_bytes, int rows,
+                 int dy, int q, int a)
+{
+	for (int r = 0; r < rows; r++) {
+		uint8_t *d = dst + (size_t)r * row_bytes;
+		const uint8_t *b = back + (size_t)r * row_bytes;
+		const uint8_t *f = r >= dy ? front + (size_t)(r - dy) * row_bytes : 0;
+		for (int x = 0; x < row_bytes; x++) {
+			int bb = (b[x] * q) >> 8;
+			d[x] = (uint8_t)(f ? bb + (((int)f[x] - bb) * a >> 8) : bb);
+		}
+	}
+}

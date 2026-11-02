@@ -45,13 +45,16 @@ def stop_bootanim():
             break
 
 
+PLAYER = "/usr/local/sbin/play-startup-sound"    # re-routes audio + retries, logs attempts
+
+
 def play_startup_sound():
     """Once per boot (marker in /run), in the background."""
     if not os.path.exists(SOUND) or os.path.exists(SOUND_PLAYED):
         return
     try:
-        subprocess.Popen(["aplay", "-q", "-D", "hw:0,0", SOUND],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cmd = [PLAYER] if os.access(PLAYER, os.X_OK) else ["aplay", "-q", "-D", "hw:CARD=sprdphone,DEV=0", SOUND]
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         open(SOUND_PLAYED, "w").close()
     except OSError:
         pass

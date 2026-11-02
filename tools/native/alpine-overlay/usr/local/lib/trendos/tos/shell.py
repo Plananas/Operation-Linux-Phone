@@ -72,6 +72,7 @@ class Shell:
     def repaint_all(self):
         """Forget what every page shows, so everything is redrawn on all pages."""
         self.shown = {k: [None] * NPAGES for k in ("title", "app", "base", "full")}
+        self._region_cache = (None, None)        # (key, image) of the last rendered app area
         self.launcher.invalidate()
         self.stats.invalidate()
 
@@ -148,9 +149,12 @@ class Shell:
             self.shown["title"][self.page] = key
 
     def draw_region(self, buf, region, key, render):
-        """Full app-area redraw on this page only when its key changed."""
+        """App-area redraw on this page only when its key changed. The image is rendered once
+        per key and copied to the other pages (not re-rendered for each of the 3 pages)."""
         if self.shown[region][self.page] != key:
-            buf[TOP:H] = render()
+            if self._region_cache[0] != key:
+                self._region_cache = (key, render())
+            buf[TOP:H] = self._region_cache[1]
             self.shown[region][self.page] = key
 
     def draw_power_menu(self, buf, now):
