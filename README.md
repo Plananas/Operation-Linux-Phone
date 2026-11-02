@@ -27,12 +27,15 @@ The bottom of the home screen shows live stats: CPU, memory, battery, storage, n
 
 ## Connecting from the laptop
 
-The phone talks to the laptop over the **USB cable only** (no Wi-Fi yet, on purpose).
+The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 
-- **Log in:** `ssh root@192.168.42.129` (key-based, no password).
-- **Internet for the phone** goes through the laptop. After every laptop reboot run once:
-  `sudo tools/pc-share-internet.sh` — the phone can then reach the internet but **not** other
-  devices on your home network.
+- **Log in over USB** (always works): `ssh root@192.168.42.129` (key-based, no password).
+- **Log in over Wi-Fi:** `ssh root@<phone-wifi-ip>` (the phone shows its Wi-Fi IP in Settings → Wi-Fi).
+- **Internet:** the phone gets its own internet from Wi-Fi — the laptop isn't needed. If you ever
+  turn Wi-Fi off and want internet over the cable instead, run `sudo tools/pc-share-internet.sh`
+  on the laptop once (shares internet but blocks the phone from the rest of your home network).
+- **Add/Change the Wi-Fi network:** `ssh -t root@192.168.42.129 /usr/local/sbin/wifi-connect`
+  (prompts for name and password; the password stays on the phone).
 
 ## Updating TREND OS
 
