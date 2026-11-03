@@ -22,7 +22,12 @@ time (see *Getting out of trouble*).
 | **Leave it alone 2 minutes** | Screen turns off by itself |
 | **Plug in while switched off** | Charging screen. Hold Power 1.5 s to start TREND OS. Unplug = it switches off |
 
-**Apps so far:** Calculator (the spinning plus sign) and **Settings** (the sliders icon) — swipe to it and tap to open a second carousel of setting icons; **Wi-Fi** is in there: it shows your connection and nearby networks, and you can **tap a network and type the password on the on-screen keyboard** to join it.
+**Apps so far:**
+- **Calculator** (the spinning plus sign) — green-phosphor terminal style, with history.
+- **Settings** (the sliders icon) — opens a second carousel. Inside it, **Wi-Fi** shows your
+  connection and nearby networks; tap a network and type the password on the on-screen keyboard.
+- **Radio** (the mast icon) — only the icon so far. The FM radio chip already works from the
+  command line (plug in wired headphones — they're the antenna); the app is next.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop
@@ -63,15 +68,19 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 | Path | What it is |
 |---|---|
 | `README.md` | This guide |
-| `PLAN.md` | Technical notes: how everything works, quirks, procedures (written for Claude, readable for you) |
+| `PLAN.md` | Technical notes for Claude: how everything works, quirks, procedures, how to add an app |
 | `tools/native/alpine-overlay/` | Everything installed on the phone (home screen, apps, services) |
 | `tools/native/` | Boot-image parts: startup script, boot animation, charging screen, graphics engine |
 | `tools/deploy.sh` | Push updates to the phone |
 | `tools/pc-share-internet.sh` | Share the laptop's internet with the phone |
+| `tools/fm/fmctl.py` | Turns the FM radio on / tunes it / off (runs on the phone) |
+| `tools/spotify/` | Shelved Spotify player build (Spotify blocks playback for this kind of client) |
+| `tools/bootlogo/`, `tools/ext/`, `bootrom_hello.py` | Old experiments: boot-logo attempts, emergency-flash tools |
 | `firmware/extracted/` | Boot images (stock Android and all TREND OS versions) |
 | `backup/` | Copies of the phone's original bootloader and settings — **never delete** |
 
 ## Ideas for later
 
-Wi-Fi · more apps (system monitor, notes, a controller for smart-home things) · server
+Radio app · more apps (system monitor, notes, a controller for smart-home things) · server
 services (website, DNS ad-blocker, MQTT) · notifications to your phone.
+Calls/SMS aren't possible (no SIM, and the modem needs Android's vendor software).

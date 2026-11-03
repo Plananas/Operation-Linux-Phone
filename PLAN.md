@@ -1,119 +1,87 @@
-# TREND OS — technical reference
+# TREND OS — technical reference (for Claude)
 
-Current-state reference, organised by topic (not a diary; history is in git). Human guide: `README.md`.
+Current state, by topic. History lives in git; user guide in `README.md`.
 
 ## 1. Device
-SM-G318H `vivalto3mveml3g` · Spreadtrum **SC8830** (Cortex-A7 ×2, ARMv7, NEON, core 1 hot-plugged) · 465 MB RAM · eMMC (`/data` 2.2 GB) · stock Android 4.4.4 · kernel **3.10.17 Samsung** (earlysuspend) · bootloader G318HXCU0APF1 · secure boot fused **off** (BootROM says `SPRD3`).
-Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot image), system p24, **userdata p26**. SPL in `mmcblk0boot0`. Full PIT: `backup/pit.txt`.
+SM-G318H `vivalto3mveml3g` · Spreadtrum **SC8830** (2× Cortex-A7 ARMv7+NEON, core 1 hot-plugs) · 465 MB RAM · `/data` 2.2 GB · stock Android 4.4.4 · kernel **3.10.17 Samsung** · secure boot **off**.
+Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot img), system p24, **userdata p26**; SPL in `mmcblk0boot0`. PIT: `backup/pit.txt`.
 
 ## 2. Current state
-- Boot image on phone: **`firmware/extracted/boot-native6.img`** (stock kernel + stock DT + our ramdisk).
-- Ramdisk `init` → (charger mode? `/bin/charger`) → early logo + `bootanim` → `switch_root` into **Alpine 3.24 in `/data/alpine`** (OpenRC). Android never starts; `/system` untouched.
-- OpenRC: sysinit devfs mdev sysfs dmesg · boot hostname(`trend`) bootmisc syslog procfs · default **usbnet sshd bootscreen local** · shutdown killprocs savecache.
-- Shell (`bootscreen` service, supervise-daemon) = `/usr/local/bin/trendos.py` → package `/usr/local/lib/trendos/tos` + `librender.so`. Launcher ~11 % of one core at 30 fps.
-- Network: USB RNDIS only. Phone 192.168.42.129, laptop 192.168.42.1 (NM connection `phone-usb`, `ipv4.method shared`, `match.driver rndis_host`). SSH key-only (`/etc/ssh/sshd_config.d/10-phone.conf`, listens on .129 + 127.0.0.1). Laptop firewall: `sudo tools/pc-share-internet.sh` (Docker sets FORWARD DROP; script allows phone→internet, blocks phone→LAN; not persistent).
-- Startup sound `/usr/local/share/trendos/startup.wav` = v4 (6 s). Backups `startup-v2.wav` (7 s), `startup-v1-bells.wav`.
+- Boot image: **`firmware/extracted/boot-native6.img`** (stock kernel + DT, our ramdisk). Ramdisk `init` → charger mode? `/bin/charger` : logo + `bootanim` → `switch_root` to **Alpine 3.24 at `/data/alpine`** (OpenRC). Android never starts.
+- OpenRC default runlevel: `usbnet sshd bootscreen wifi local`. Shell = `bootscreen` service (supervise-daemon) → `/usr/local/bin/trendos.py` → package `/usr/local/lib/trendos/tos` + `librender.so`.
+- Network: **Wi-Fi** (default route, auto-connects) + **USB RNDIS** (phone 192.168.42.129, laptop .1, NM conn `phone-usb`, metric 100 backup). SSH key-only, root.
+- Apps: home carousel = welcome cube, Calculator, Radio (icon only, app not written yet), Settings → [Wi-Fi]. Spotify shelved (§7).
 
-## 3. Hardware quirks / gotchas (read before touching)
-**Boot image**
-- Stock boot.img has a Spreadtrum **device tree after the ramdisk** (`dt_size` header field). abootimg drops it → no boot. Always repack with `tools/repack_keep_dt.py` (keeps kernel + DT byte-identical).
-- Ramdisk cpio must be root-owned → `tools/native/mkramdisk.py` writes newc with uid/gid 0 (no sudo).
-- Bootloader passes **`androidboot.mode=charger`** when powered on by a charger. `poweroff` with USB plugged → charger boot.
-- KERNEL (p20) is writable from Linux (`dd`). The first 8 MB (SBOOT/SBOOT2) are **eMMC power-on write-protected**; Download mode **refuses modified SBOOT**. Power-on Samsung logo lives in SBOOT → cannot be changed.
-
-**Display (`/dev/fb0`, sprdfb, 480×800, 3 pages)**
-- Byte order **R,G,B,X** (driver reports otherwise) → PIL raw mode `RGBX`.
-- `FBIOPAN_DISPLAY` returns immediately; the flip happens at the next refresh → always `FBIO_WAITFORVSYNC` after panning, triple-buffer, never write the visible page.
-- Wake without Android: wake lock → `echo mem` → `echo on` > `/sys/power/state` → wait `/sys/power/wait_for_fb_wake` → pan. Until panned, the controller shows the bootloader logo copy.
-- **Never write 0 to `/sys/class/backlight/panel/brightness`** (backlight then stays off until the next late resume). Use 160.
-- Pan and fb **read/write return EPERM while the display is asleep**.
-- If the shell restarts while asleep, the display stays off → shell calls `screen_on` at startup.
-
-**Input**: touch `/dev/input/event1` (ist30xx, MT protocol B, slot/tracking-id, coords = screen px; also KEY_BACK 158). Keys `/dev/input/event0` (HOME 102, POWER 116, VOL). `struct input_event` = `llHHi` (16 B).
-
-**Audio**: card `sprdphone`, PCM 0. **Card numbers change between boots** (modem virtual cards `VIRTUAL AUDIO W`, `saudiovoip`, `alli2s` register in random order) → always address it by name: `amixer -c sprdphone`, `aplay -D hw:CARD=sprdphone,DEV=0` (using card 0 sent the sound to a modem card ~1 boot in 3 → silent startup). Route with `/usr/local/sbin/audio-speaker` (from Android `tiny_hw.xml`). **`VBC Switch` must be `ap`** (`cp0-dsp` → aplay I/O error). Startup sound: `/usr/local/sbin/play-startup-sound` (re-routes, retries, logs to `/var/log/trendos-sound.log`).
-
-**CPU stats**: core 1 hot-plugs (touch boost) → aggregate `cpu` line of /proc/stat jumps; compute per core.
-
-**Networking**: kernel `ANDROID_PARANOID_NETWORK` → only root (or gid 3003 `inet`) may open sockets. USB host MAC/interface name is random each boot.
+## 3. Gotchas (read before touching)
+**Boot image**: stock boot.img has a Spreadtrum DT *after* the ramdisk (`dt_size`); abootimg drops it → no boot. Always repack with `tools/repack_keep_dt.py`. Ramdisk cpio must be root-owned → `tools/native/mkramdisk.py`. Bootloader passes `androidboot.mode=charger` when powered on by a charger (`poweroff` with USB in → charger boot). First 8 MB (SBOOT/SBOOT2) write-protected; Samsung power-on logo can't change.
+**Display** `/dev/fb0` 480×800, 3 pages, byte order **RGBX**. Pan returns immediately → always `FBIO_WAITFORVSYNC`, triple-buffer, never write the visible page. **Never write 0 to backlight** (use 160). Pan/read/write = EPERM while asleep. Wake: wake lock → `mem` → `on` > `/sys/power/state` → wait `/sys/power/wait_for_fb_wake` → pan.
+**Input**: touch `/dev/input/event1` (MT protocol B, screen px; KEY_BACK 158). Keys `event0` (HOME 102, POWER 116, VOL). `input_event` = `llHHi`.
+**Audio**: card numbers change per boot → always by name: `amixer -c sprdphone`, `aplay -D hw:CARD=sprdphone,DEV=0`. Route with `/usr/local/sbin/audio-speaker`; `VBC Switch` must be `ap`.
+**CPU**: compute /proc/stat per core (core 1 hot-plugs). **Sockets**: `ANDROID_PARANOID_NETWORK` → only root/gid 3003 may open sockets.
+**Wi-Fi** (bcmdhd built in, nl80211 only): `/usr/local/sbin/wifi-up` loads fw from `/data/wifi`; **must `iw dev wlan0 set power_save off`** or DHCP never completes. `wifi-connect` (SSH, prompts), OpenRC `wifi` service autoconnects; creds `/etc/wpa_supplicant/wpa_supplicant.conf`.
+**Font**: VT323 has **no arrows/geometric glyphs (↓↑○●▶✓)** — use ASCII or draw shapes. `gfx.font(size)` takes DejaVu-equivalent px. 3D ASCII atlas uses DejaVu (`gfx.art_font`).
+**Perf**: full-frame ops memory-bound (~13 ms/frame); idle shell ~11 % of one core. Measure via `utime+stime` from `/proc/PID/stat`.
 
 ## 4. Code map
-`tools/native/alpine-overlay/` mirrors the phone filesystem.
+`tools/native/alpine-overlay/` mirrors the phone filesystem. Package root `usr/local/lib/trendos/tos/`:
 
-| Phone path | Role |
+| File | Role |
 |---|---|
-| `/usr/local/bin/trendos.py` | entry; `--boot-frame F` / `--boot-anim F` export ramdisk assets |
-| `tos/config.py` | every constant (layout, colours, timings, keys, paths) |
-| `tos/fb.py` | `Framebuffer`: pages, `show()` (pan+vsync), `screen_on/off` |
-| `tos/render.py` | tile atlas, `matrix()`, `Renderer` (C via ctypes, numpy fallback; `scale`/`blend` 2D helpers) |
-| `tos/models/` | 3D model library: `shape.py` (`Shape`, `boxes()`, `extrude()` for 2D silhouettes, `arc()`), `icons.py` (cube, plus, spotify, settings, signal, each `@model(name, colour)`), `get(name)`; preview on the phone with `python3 -m tos.models NAME` |
-| `tos/shell.py` | `Shell` main loop; modes launcher/app/transition/power/halt + asleep |
-| `tos/launcher.py` | carousel (`Entry`: app **or** `opens=` sub-menu; `is_home`); home = [welcome cube, Calculator, Settings]; `render_band` for slide snapshots |
-| `tos/transition.py` | `Slide` app open/close animation |
-| `tos/power.py` | animated `PowerMenu` |
-| `tos/keyboard.py` | reusable on-screen keyboard (abc/123/#+= layers, shift, del/space/esc/done); manages its own text buffer; host app draws the field |
-| `tos/stats.py`, `title.py`, `inputdev.py`, `gfx.py`, `boot.py` | stats panel · typewriter title · evdev · fonts/text/blit · handover/sound/exports |
-| `/usr/local/share/trendos/fonts/VT323-Regular.ttf` | UI font (DEC VT320 revival, OFL). `gfx.font(size)` takes DejaVu-equivalent px, scales ×1.3 and shifts up so caps align; single weight, `bold` ignored. **No arrows/geometric glyphs (↓↑○●▶✓)** — use ASCII or draw shapes. 3D ASCII atlas stays on DejaVu (`gfx.art_font`). Boot logo/bootanim/charger (boot image) still DejaVu |
-| `tos/apps/` | `App` base (`touch`, `key`, `render`) · `calculator.py` · `wifi.py` (status + scan, background threads)
-| `tos/transition.py` | `Slide` open/close animation (apps + sub-menus); `live_fn`/`live_side` re-render one side each frame so a carousel keeps spinning while it slides in/out | |
-| `/usr/local/lib/trendos/librender.so` | ← `tools/native/render.c` (3D raster + blit, `scale_bytes`, `blend_rect`) |
-| `/etc/init.d/{bootscreen,usbnet}`, `/usr/local/sbin/{screen-on,audio-speaker}` | services / helpers |
-| `/usr/local/bin/mksound.py`, `mkcharger.py` | generate startup.wav / charger.bin |
+| `config.py` | all constants: `W=480 H=800 TOP=66 APP_H`, `PALETTE` + colour indices (`RED GREEN … CYAN ORANGE WHITE`), `ACCENT`, `SHADES`, timings |
+| `shell.py` | main loop; modes launcher/app/transition/power/halt/asleep; region cache per page keyed by `app.key()` |
+| `launcher.py` | `Entry(model, app=None, opens=None, name=None, phase=…)`; `default_entries()`, `settings_entries()` |
+| `apps/` | `base.App`, `calculator.py`, `wifi.py` (threads + keyboard example), `spotify.py` (shelved) |
+| `models/` | 3D icons: `shape.py` (`Shape`, `boxes`, `extrude`, `arc`, `relief`), `icons.py` (`@model(name, colour)`), `registry.py` |
+| `keyboard.py` | on-screen keyboard (`Keyboard(on_done, on_cancel, text)`, `.touch/.key/.render`, `KB_Y`) |
+| `gfx.py` | `font`, `text_strip`, `canvas`, `to_rgbx`, `blit` |
+| `fb.py` `render.py` `transition.py` `power.py` `stats.py` `title.py` `inputdev.py` `boot.py` | framebuffer · C renderer wrapper · Slide anim · power menu · stats panel · typewriter title · evdev · boot handover/sound |
 
-Ramdisk (`tools/native/`): `ramdisk/init` · `bootanim.c` (loading spin, frame = f(CLOCK_MONOTONIC), stopped by shell via `/dev/.bootanim.pid`) · `fbpan.c` · `charger.c` · binaries `*.armv7-static`.
-New app: subclass `App`, add `Entry(shape, colour, app)` in `launcher.default_entries()`.
-Rendering rules: shell redraws a region per page only when its key changes, rendering once per key and copying to the other pages (`_region_cache`); per-page dirty rects; screens clear each page once on switch (`shown["base"]`).
-Perf notes: full-frame ops are **memory-bound** (~13 ms per 480×800 frame that reads 2 frames + writes 1; explicit NEON was no faster) → transitions cost ~40–60 % CPU for their 0.3 s; idle app ≈ one render per cursor blink. Measure with 100 ms `/proc/PID/stat` sampling (`utime+stime`).
+Other: `tools/native/render.c` → `librender.so` (built on phone by deploy) · `/etc/init.d/{bootscreen,usbnet,wifi}` · `/usr/local/sbin/*` helpers · ramdisk sources in `tools/native/` (`ramdisk/init`, `bootanim.c`, `fbpan.c`, `charger.c`, `*.armv7-static`).
 
-## 5. Procedures
-- **Userland deploy:** `tools/deploy.sh` (tar overlay → phone, build librender `-O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4`, restart shell).
-- **Compile static C on phone:** `gcc -static -O2 -s -Wall -Wextra -o X X.c [-lm]` (Alpine has gcc musl-dev linux-headers).
-- **Boot image:** on phone `trendos.py --boot-anim bootanim.bin`, `--boot-frame logo.rgbx`, `mkcharger.py charger.bin`; copy back with `charger/fbpan/bootanim` binaries; on laptop
-  `python3 tools/native/mkramdisk.py tools/native/ramdisk busybox.static rd.gz logo.rgbx=… bin/fbpan=… bin/bootanim=… bootanim.bin=… bin/charger=… charger.bin=…`
-  then `python3 tools/repack_keep_dt.py firmware/extracted/boot.img rd.gz firmware/extracted/boot-nativeN.img`.
-  (`busybox.static` = Alpine `busybox-static` package `/bin/busybox.static`.)
-- **Flash boot image from Linux:** copy to phone, `dd of=/dev/mmcblk0p20 conv=fsync`, compare sha256 of the first N bytes, reboot. Fallback: Heimdall in Download mode `heimdall flash --KERNEL img`.
-- **Rescue:** init falls back to RNDIS + `telnet 192.168.42.129` if Alpine can't start, or if `/data/alpine/.native-disable` exists.
-- **UI tests without hands:** write `input_event`s to event1 (touch: SLOT 0, TRACKING_ID n, X, Y, SYN … TRACKING_ID -1) / event0 (keys); screenshot = read `/dev/fb0` at offset `pan_y*480*4` (`/sys/class/graphics/fb0/pan`). Wake first (inject Home) — fb is EPERM while asleep.
-- **CPU of the shell:** read utime+stime from `/proc/PID/stat` twice, ticks/second = %.
-- **Emergency (BootROM):** battery out/in, hold Vol-Up, plug USB → `1782:4d00`. `tools/bootrom_hello.py` = read-only handshake. Flashing via BootROM needs SC8830 FDL1/FDL2 (not obtained) + spd_dump.
+## 5. Adding an app (recipe)
+1. **App** — `tos/apps/myapp.py`:
+   ```python
+   from PIL import Image, ImageDraw
+   from ..config import W, APP_H, ACCENT
+   from ..gfx import font, to_rgbx
+   from .base import App
+   class MyApp(App):
+       name = "My App"                       # title bar + launcher label
+       def touch(self, ev, x, y): ...        # ev "down"/"move"/"up", screen coords (y >= TOP)
+       def key(self, now): return self.state # hashable; render() only runs when it changes
+       def render(self, now):                # -> numpy RGBX array (APP_H, W, 4)
+           im = Image.new("RGB", (W, APP_H)); d = ImageDraw.Draw(im)
+           d.text((20, 20), "hello", font=font(28), fill=ACCENT); return to_rgbx(im)
+   ```
+   Rules: keep `key()` cheap and stable when idle (that's what keeps CPU low); include time buckets in it only when animating. Slow work (subprocess, network) → daemon thread that updates state and bumps a version in `key()` (see `wifi.py`). Text input → `Keyboard` (see `wifi.py` connect mode). Back/Home/title-tap close the app automatically. Style: black bg, green-phosphor `ACCENT`, VT323, ASCII only.
+2. **Export** in `tos/apps/__init__.py`.
+3. **Icon** — in `tos/models/icons.py` add `@model("myicon", COLOUR)` returning a Shape from `boxes([...], colour_by_axis=(…))` (blocky), `extrude(inside_fn, outlines, depth, colour)` (2D silhouette) or `relief(colour_at, depth)`. Fit within ~[-1.3, 1.3] x/y, flat front. Preview: `ssh phone 'cd /usr/local/lib/trendos && python3 -m tos.models myicon'`.
+4. **Launcher** — `Entry("myicon", MyApp(), phase=(a, b, c))` in `default_entries()` (or `settings_entries()` for a setting; a sub-menu is `Entry(..., opens="name")`).
+5. **Deploy** `tools/deploy.sh`, then check: `ssh root@192.168.42.129 rc-service bootscreen status`; logs via `logread`/supervise output. Screenshot + tap without hands: §6.
+New OpenRC service: add `etc/init.d/X` to the overlay **and** to `FILES` in `tools/deploy.sh` (note: `etc/init.d/wifi` is currently *not* in `FILES` — it was installed by hand), then `rc-update add X default` on the phone.
 
-## 5a. Settings / nested carousels
-- A sub-menu is just another `Launcher` (`is_home=False`). The shell keeps the home carousel plus the current one; opening a sub-menu or app uses the `Slide` transition (snapshot behind, destination in front). Nav: tap Settings icon → Settings carousel (Wi-Fi icon) → tap → Wi-Fi app. **Back** = up one level (title-tap too); **Home** = straight to the home carousel (`go_home`).
-- Icons are models from `tos/models` (`settings` = slider bars, `signal` = Wi-Fi bars); see the steps in `tos/models/__init__.py` to add one.
-- Add a setting: add an `Entry("model", app=…, name=…)` to `settings_entries()`.
-- Wi-Fi app: status + nearby list; **tap a network to join it**, typing the password on the on-screen keyboard (`tos/keyboard.py`). Open networks connect on tap. Still works over SSH (`wifi-connect`) too.
+## 6. Procedures
+- **Deploy userland**: `tools/deploy.sh [user@host]` (tar overlay → phone, build librender, restart shell). `SPOTIFY=1` re-enables Spotify.
+- **Static C on phone**: `gcc -static -O2 -s -o X X.c [-lm]`.
+- **Boot image**: on phone `trendos.py --boot-anim bootanim.bin`, `--boot-frame logo.rgbx`, `mkcharger.py charger.bin`; copy back; then on laptop
+  `python3 tools/native/mkramdisk.py tools/native/ramdisk busybox.static rd.gz logo.rgbx=… bin/fbpan=… bin/bootanim=… bootanim.bin=… bin/charger=… charger.bin=…` →
+  `python3 tools/repack_keep_dt.py firmware/extracted/boot.img rd.gz firmware/extracted/boot-nativeN.img`. Flash: `dd of=/dev/mmcblk0p20 conv=fsync` on phone, verify sha256, reboot (fallback `heimdall flash --KERNEL img` in Download mode).
+- **Rescue**: init falls back to RNDIS + `telnet 192.168.42.129` if Alpine fails or `/data/alpine/.native-disable` exists. BootROM: battery out, hold Vol-Up, plug USB → `1782:4d00` (`tools/bootrom_hello.py`; flashing needs FDL1/FDL2, not obtained).
+- **UI tests**: inject `input_event`s into event1 (SLOT 0, TRACKING_ID n, X, Y, SYN … TRACKING_ID -1) / event0 (keys). Screenshot = read `/dev/fb0` at `pan_y*480*4` (`/sys/class/graphics/fb0/pan`), as RGBX. Wake first (inject Home).
 
-## 6. Dead ends (don't retry)
-- TWRP for this model: not findable. Root via TWRP/SuperSU unnecessary (we own the ramdisk).
-- `adb root` on stock: Samsung user-build adbd ignores `ro.secure=0`. SELinux permissive via cmdline: ignored.
-- Changing the power-on Samsung logo: in signed SBOOT, write-protected + Download mode rejects. PARAM logos are unused (PARAM restored to stock).
-- Mainline Linux / postmarketOS port: none for SC8830.
+## 7. Subsystems
+**FM radio** (works, analog; app not written): FM core inside BCM43430A1 BT combo, driven by vendor HCI `0xFC15 [reg, 0=w|1=r, data…]` over `/dev/ttyS0` 115200 RTS/CTS. Script `tools/fm/fmctl.py on [MHz] | tune MHz | off` (phone: `/root/bt/fmctl.py` + `BCM43430A1.hcd`). Headphones = antenna.
+- UART EIO until `rfkill0` toggled 0→1. Bring-up: reset → `0xFC2E` → send .hcd → reset → **`0xFC27` (12 zeros) sleep off** (else `close()` hangs, port wedged till reboot). Always `tcflush` before close.
+- Regs: 0x00 power (1 FM, 3 +RDS) · 0x01 ctrl (0x04 stereo) · 0x05 audio (0x1c = DAC L+R; 0x02 mute) · 0x09 tune mode (1 preset, 2 seek) · 0x0a/0b freq = kHz−64000 LE · 0x0f RSSI · 0x12 flags · 0xf8 volume. Codec line-in path in `codec_on()`.
+- **DON'T use digital FM** (`hw:sprdphone,4` / EXTDIGFM) — reboots the phone. Open: station check, RDS (0x80), seek, volume semantics.
 
-## 7. Backups (never delete)
-`backup/SBOOT-original.bin`, `mmcblk0boot0-SPL-original.bin`, `PARAM-original.bin`, `pit.txt`, `kingo/` (2018 Kingo Root leftovers, disabled on phone in `/system/kingo-disabled/`). Stock firmware zip: `firmware/` (gitignored, re-download from samfw.com).
+**Spotify** (shelved): go-librespot works for browsing/login, but every track fails `aes key code 1` (Spotify refuses librespot clients; workaround = DRM circumvention, not doing it). Code kept (`apps/spotify.py`, `etc/init.d/spotify`, `tools/spotify/`). Revive: import in `apps/__init__.py`, re-add Entry, `SPOTIFY=1 tools/deploy.sh`.
 
-## 8. Next ideas
-Wi-Fi (bcmdhd, firmware in `/system/etc/wifi`, wpa_supplicant) · more apps · server services · notifications (ntfy/Telegram) · SMS/calls not possible (no SIM; modem would need vendor daemons).
+## 8. Dead ends (don't retry)
+TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · changing Samsung power-on logo (signed SBOOT) · mainline/postmarketOS (no SC8830 port) · digital FM path · spotifyd/librespot playback.
 
-## 9. History (one line per milestone)
-`11aec19` root via ramdisk telnet service, DT-preserving repack · `7aae2ea` native Alpine boot, USB tethering, SSH · `dec2b87` startup screen, boot animation, boot-logo investigation · `ec20b35` startup sound · `9a4d218` launcher, calculator, C renderer, sleep, power menu, charger mode · `639f59a` refactor into `tos` package · `4cfe591` animated power menu, calculator redesign, transitions, sound v4.
+## 9. Backups (never delete)
+`backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). Stock firmware in `firmware/` (gitignored; samfw.com).
 
-## 2026-11-02 Wi-Fi (Broadcom bcmdhd, native)
-- `wlan0` + driver are built into the kernel; firmware in Android's `/system/etc/wifi` (`bcmdhd_sta.bin`, `nvram_net.txt`). `cfg80211`/`phy0` present → **nl80211 only** (wext unsupported).
-- Bring-up: copy firmware to `/data/wifi`, set `/sys/module/dhd/parameters/{firmware_path,nvram_path}`, `ip link set wlan0 up` → firmware loads (`/usr/local/sbin/wifi-up`). No stored MAC (`.mac.info` missing) → default Broadcom MAC `00:90:4c:…` (fine).
-- Connect: `wpa_supplicant -D nl80211` + `udhcpc`. **Must `iw dev wlan0 set power_save off`** or bcmdhd drops the broadcast DHCP reply (lease never arrives). Scan with `iw dev wlan0 scan`.
-- Tooling: `apk add wpa_supplicant iw`. Helpers: `wifi-up`, `wifi-connect` (prompts for SSID/password, hidden; wrong password → reason 15 `4WAY_HANDSHAKE_TIMEOUT` = WRONG_KEY, reported clearly), `wifi-autostart` + OpenRC **`wifi`** service (auto-connects saved net on boot, background so boot isn't delayed).
-- Credentials: `/etc/wpa_supplicant/wpa_supplicant.conf` (0600, from `wpa_passphrase`). Set up over SSH so the password never goes through the chat.
-- Routing: Wi-Fi default (udhcpc) is preferred; usbnet default is metric 100 (backup). SSH over USB still works (the 192.168.42.0/24 link route stays). Phone no longer needs the laptop for internet.
-- Verified: reboot → auto-connects, internet OK.
-
-## 2026-11-02 Spotify app (browsing works, playback blocked by Spotify)
-- **Shelved 2026-11-03:** removed from the launcher, `SpotifyApp` not imported, `spotify` service disabled at boot, go-librespot binary removed from the phone (deploy only copies it with `SPOTIFY=1`). Code, service, saved login and icon model kept. Revive: import in `tos/apps/__init__.py`, re-add the launcher Entry, deploy with `SPOTIFY=1`. Re-tested 2026-11-03 with the phone clock correct: still `aes key code 1`; ncspot uses the same librespot protocol, so it would fail the same way.
-- Engine: **go-librespot v0.10.5**, cross-compiled for Alpine/musl/ARMv7 by `tools/spotify/build-go-librespot.sh` (x86 Alpine container + clang targeting an armv7 sysroot of Alpine packages; needs `-no-pie` + lld). Binary `tools/spotify/go-librespot` is gitignored; `deploy.sh` copies it when changed. Runtime libs: `alsa-lib flac-libs mpg123-libs libvorbis libogg`.
-- Service: OpenRC **`spotify`** (supervise-daemon, respawns; an expired pairing code makes it exit → fresh code). Config + saved login: `/var/lib/go-librespot/` (`config.yml` from the overlay, `state.json` holds credentials). API on `127.0.0.1:3678`.
-- Login: `device_auth` — the app shows a code for spotify.com/pair (phone has no browser). Works; credentials persist.
-- App `tos/apps/spotify.py`: pair screen → library (Liked Songs + playlists) → playlist tracks (Play/Shuffle) + docked now-playing panel (prev/play-pause/next, volume).
-- **Blocker:** every track fails with `failed retrieving aes key with code 1` — Spotify refuses the legacy AES audio key to librespot-type clients (tracks, albums, playlists, Liked Songs all refused). Upstream's proper fix ("PlayPlay") is a stub; it would mean circumventing Spotify's DRM, which we don't do. go-librespot issues #279, #235.
-- Dead end: spotifyd 0.4.2 (Alpine package) — Connect-receiver only, no local control API, same key problem.
-- Legitimate routes still open: official web player in Chromium + Widevine (licensed CDM), Spotify remote control (Web API / Connect), local files from the SD card.
+## 10. Next ideas
+Radio app (via `fmctl.py`) · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).
