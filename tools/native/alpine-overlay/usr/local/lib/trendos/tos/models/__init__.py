@@ -9,6 +9,6 @@ To add an icon:
 """
 from . import icons             # noqa: F401  (registers the built-in models)
 from .registry import colour, get, model, names
-from .shape import Shape, arc, boxes, extrude
+from .shape import Shape, arc, boxes, extrude, relief
 
-__all__ = ["Shape", "arc", "boxes", "colour", "extrude", "get", "model", "names"]
+__all__ = ["Shape", "arc", "boxes", "colour", "extrude", "get", "model", "names", "relief"]

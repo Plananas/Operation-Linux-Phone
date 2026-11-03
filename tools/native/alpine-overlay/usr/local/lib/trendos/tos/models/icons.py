@@ -8,7 +8,7 @@ import numpy as np
 
 from ..config import RED, GREEN, BLUE, YELLOW, MAGENTA, CYAN, ORANGE, WHITE, SPOTIFY
 from .registry import model
-from .shape import Shape, arc, boxes, extrude
+from .shape import Shape, arc, boxes, extrude, relief
 
 
 @model("cube", GREEN)
@@ -94,3 +94,49 @@ def spotify(radius=1.2, depth=0.17, slot_walls=False):
                     arc(cx, cy, r - h, a0, a1) + arc(*e1, h, a1 + math.pi, a1))
             outlines.append(to_object(loop))
     return extrude(inside, outlines, depth, SPOTIFY, extent=radius)
+
+
+def _seg_dist(px, py, ax, ay, bx, by):
+    """Distance from (px, py) to the segment a-b."""
+    dx, dy = bx - ax, by - ay
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(px - ax - t * dx, py - ay - t * dy)
+
+
+@model("radio", MAGENTA)
+def radio(depth=0.2):
+    """Radio: a broadcast mast (A-frame with one brace and a ground plate) topped by a red
+    beacon, with two radio waves arcing out on each side of it."""
+    top, foot, half_base = 0.38, -1.2, 0.62        # mast apex, ground, half-width at the base
+    bx, by, br = 0.0, 0.6, 0.2                     # beacon ball
+    waves = ((0.52, 0.11), (0.98, 0.11))           # (radius, half-thickness) around the beacon
+    spread = 0.58                                  # wave half-angle (rad) either side of horizontal
+
+    def leg_x(y):                                  # |x| of the legs at height y
+        return half_base * (top - y) / (top - foot)
+
+    def colour_at(x, y):
+        if math.hypot(x - bx, y - by) < br:
+            return RED                             # beacon
+        r = math.hypot(x - bx, y - by)
+        a = math.atan2(y - by, abs(x - bx))       # angle from horizontal, mirrored left/right
+        for wr, wt in waves:
+            if abs(r - wr) < wt and abs(a) < spread:
+                return YELLOW
+            for s in (-1, 1):                      # round caps at the wave ends
+                cx, cy = wr * math.cos(spread), by + s * wr * math.sin(spread)
+                if math.hypot(abs(x - bx) - cx, y - cy) < wt:
+                    return YELLOW
+        if foot <= y <= top + 0.04:
+            if any(_seg_dist(x, y, 0, top, s * half_base, foot) < 0.095 for s in (-1, 1)):
+                return MAGENTA                     # legs
+            if abs(y + 0.45) < 0.07 and abs(x) < leg_x(-0.45):
+                return MAGENTA                     # brace
+            if abs(y - foot) < 0.06 and abs(x) < half_base + 0.12:
+                return MAGENTA                     # ground plate
+        if abs(x) < 0.07 and top <= y <= by - br + 0.02:
+            return MAGENTA                         # neck up to the beacon
+        return None
+
+    scale, lift = 1.08, 0.05                       # fill the icon box like the others
+    return relief(lambda x, y: colour_at(x / scale, (y - lift) / scale), depth, extent=1.35)

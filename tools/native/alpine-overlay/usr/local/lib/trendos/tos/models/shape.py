@@ -9,6 +9,8 @@ Building blocks:
   boxes(...)     union of axis-aligned boxes (plus sign, bars, ...)
   extrude(...)   any 2D silhouette pushed into a slab, with shaded side walls (coins, logos, ...)
   arc(...)       points along a circular arc, for building extrude outlines
+  relief(...)    like extrude, but multi-coloured and with side walls found automatically from
+                 the silhouette (for shapes whose outlines are tedious to trace: towers, waves)
 """
 import math
 
@@ -96,4 +98,54 @@ def extrude(inside, outlines, depth, colour, extent=1.0, density=DENSITY):
             k = max(1, int(length * density))
             pts = [(x0 + dx * (i + 0.5) / k, y0 + dy * (i + 0.5) / k, z) for i in range(k) for z in zs]
             faces.append((pts, (dy / length, -dx / length, 0), wall_col))   # right of travel = out
+    return Shape.from_faces(faces)
+
+
+def relief(colour_at, depth, extent=1.3, density=DENSITY, wall_bins=24):
+    """A multi-coloured 2D silhouette pushed into a slab of half-thickness `depth`.
+
+    colour_at(x, y) -> palette index, or None outside the shape. It is sampled on a grid over
+    [-extent, extent]^2; the front/back faces get one face per colour, and the side walls are
+    found from the sampled mask: every edge cell gets a wall whose outward normal comes from the
+    gradient of a blurred mask, quantised into `wall_bins` directions (one face each), so curved
+    edges shade smoothly without tracing outlines by hand.
+    """
+    n = max(2, int(2 * extent * density))
+    g = ((np.arange(n) + 0.5) / n * 2 - 1) * extent
+    col = np.full((n, n), -1, np.int32)                    # col[iy, ix]
+    for iy, y in enumerate(g):
+        for ix, x in enumerate(g):
+            c = colour_at(x, y)
+            if c is not None:
+                col[iy, ix] = c
+    solid = col >= 0
+    gx, gy = np.meshgrid(g, g)
+
+    faces = []
+    for c in np.unique(col[solid]):
+        sel = col == c
+        for z in (-depth, depth):
+            pts = np.stack([gx[sel], gy[sel], np.full(sel.sum(), z)], 1)
+            faces.append((pts, (0, 0, -1 if z < 0 else 1), int(c)))
+
+    # edge cells: solid with at least one empty 4-neighbour
+    p = np.pad(solid, 1)
+    edge = solid & ~(p[1:-1, 2:] & p[1:-1, :-2] & p[2:, 1:-1] & p[:-2, 1:-1])
+    # outward normal = minus the gradient of a 5x5 box-blurred mask
+    f = np.pad(solid.astype(np.float32), 2)
+    blur = sum(f[dy:dy + n, dx:dx + n] for dy in range(5) for dx in range(5))
+    ny, nx = np.gradient(blur)
+    ang = np.arctan2(-ny, -nx)
+    bins = np.round(ang / (2 * math.pi) * wall_bins).astype(int) % wall_bins
+    nz = max(2, int(2 * depth * density))
+    zs = ((np.arange(nz) + 0.5) / nz * 2 - 1) * depth
+    for b in range(wall_bins):
+        for c in np.unique(col[edge]):
+            sel = edge & (bins == b) & (col == c)
+            if not sel.any():
+                continue
+            xy = np.stack([gx[sel], gy[sel]], 1)
+            pts = np.concatenate([np.column_stack([xy, np.full(len(xy), z)]) for z in zs])
+            a = b / wall_bins * 2 * math.pi
+            faces.append((pts, (math.cos(a), math.sin(a), 0), int(c)))
     return Shape.from_faces(faces)
