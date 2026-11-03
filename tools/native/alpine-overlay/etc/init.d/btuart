@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+# Bluetooth chip on the UART -> hci0 (needs the TREND OS kernel with CONFIG_BT_HCIUART).
+# Stopping it detaches hci0 and powers the chip off (the FM radio powers it up again itself).
+name="Bluetooth UART (bt-up / btattach)"
+command="/usr/local/sbin/bt-up"
+command_background=true
+pidfile="/run/btuart.pid"
+
+depend() {
+	before bluetooth
+}
+
+stop_post() {
+	sleep 0.5
+	python3 -c 'import sys; sys.path.insert(0, "/usr/local/lib/trendos")
+from tos import btchip
+btchip.power(False)' 2>/dev/null || true
+}

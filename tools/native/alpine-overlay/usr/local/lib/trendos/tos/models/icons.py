@@ -142,29 +142,72 @@ def radio(depth=0.2):
     return relief(lambda x, y: colour_at(x / scale, (y - lift) / scale), depth, extent=1.35)
 
 
-@model("clock", BLUE)
-def clock(depth=0.18):
-    """Clock: a blue ring with four white hour marks and white hands at ten past ten (the
-    classic watch-advert pose), joined at a white centre boss. The face is open, so the
-    background shows through between the hands."""
-    r_out, r_in = 1.25, 1.0
-    hands = [(math.radians(90 + 60), 0.55, 0.11), (math.radians(90 - 60), 0.85, 0.08)]  # hour, minute
+_CLOCK_R_OUT, _CLOCK_R_IN = 1.25, 1.0
 
+
+def clock_face(depth=0.18):
+    """Blue ring with four white hour marks and a white centre boss (no hands)."""
     def colour_at(x, y):
         r = math.hypot(x, y)
-        if r_in <= r <= r_out:
+        if _CLOCK_R_IN <= r <= _CLOCK_R_OUT:
             return BLUE
-        if r > r_out:
+        if r > _CLOCK_R_OUT:
             return None
         if r < 0.16:
-            return WHITE                                           # centre boss
+            return WHITE
         a = math.atan2(y, x)
         for k in range(4):                                         # marks at 12, 3, 6, 9
             ka = k * math.pi / 2
-            if r_in - 0.24 <= r < r_in and abs(math.sin(a - ka)) * r < 0.08 and math.cos(a - ka) > 0:
-                return WHITE
-        for ang, length, half in hands:
-            if _seg_dist(x, y, 0, 0, length * math.cos(ang), length * math.sin(ang)) < half:
+            if _CLOCK_R_IN - 0.24 <= r < _CLOCK_R_IN and abs(math.sin(a - ka)) * r < 0.08 and math.cos(a - ka) > 0:
                 return WHITE
         return None
-    return relief(colour_at, depth, extent=r_out)
+    return relief(colour_at, depth, extent=_CLOCK_R_OUT)
+
+
+def _hand(angle, length, half_w, z, colour):
+    """A clock hand: a thin box from the centre to `length`, turned `angle` radians clockwise
+    from 12 o'clock, sitting at depth z (negative = in front of the face)."""
+    b = boxes([((0, length / 2, z), (half_w, length / 2, 0.06))], colour_by_axis=(colour, colour, colour))
+    c, s = math.cos(-angle), math.sin(-angle)
+    return b.transformed([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+
+
+CLOCK_HANDS = [(0.55, 0.10, -0.22, WHITE), (0.86, 0.07, -0.30, WHITE), (0.92, 0.035, -0.38, RED)]
+                                            # hour, minute, second: (length, half width, z, colour)
+
+
+def hand_angles(h, m, s=0.0):
+    """Clockwise angles from 12 o'clock (radians) of the hour, minute and second hands."""
+    return ((h % 12 + m / 60) / 12 * 2 * math.pi, (m + s / 60) / 60 * 2 * math.pi, s / 60 * 2 * math.pi)
+
+
+def clock_hands(h, m, s=None):
+    """Hour, minute (white) and optional second (red) hands for the time h:m:s (s may be
+    fractional for a sweeping second hand)."""
+    angles = hand_angles(h, m, s or 0.0)
+    n = 3 if s is not None else 2
+    return Shape.combine(*[_hand(a, *spec) for a, spec in zip(angles[:n], CLOCK_HANDS[:n])])
+
+
+@model("clock", BLUE)
+def clock():
+    """Clock icon: the 3D clock face at ten past ten (the classic watch-advert pose). The Clock
+    app builds the same face with the real time (clock_face + clock_hands)."""
+    return Shape.combine(clock_face(), clock_hands(10, 10))
+
+
+# Bluetooth rune: the vertical stroke plus two arrowheads (polyline vertices, unit height ~2)
+_BT_RUNE = [[(-0.42, 0.40), (0.42, -0.40), (0.0, -0.82), (0.0, 0.82), (0.42, 0.40), (-0.42, -0.40)]]
+
+
+@model("bluetooth", BLUE)
+def bluetooth(depth=0.16):
+    """Bluetooth: a blue oval with the white rune standing proud of its face, like the logo."""
+    rx, ry = 0.82, 1.22
+
+    def on_rune(x, y, w):
+        return any(_seg_dist(x, y, ax, ay, bx, by) < w
+                   for path in _BT_RUNE for (ax, ay), (bx, by) in zip(path, path[1:]))
+    oval = relief(lambda x, y: BLUE if (x / rx) ** 2 + (y / ry) ** 2 <= 1 else None, depth, extent=1.25)
+    rune = relief(lambda x, y: WHITE if on_rune(x, y, 0.11) else None, 0.07, extent=1.0)
+    return Shape.combine(oval, rune.transformed(t=(0, 0, -(depth + 0.07))))

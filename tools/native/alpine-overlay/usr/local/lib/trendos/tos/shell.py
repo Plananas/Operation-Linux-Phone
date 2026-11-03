@@ -7,7 +7,7 @@ down). Independently the screen can be asleep. The launcher is frozen while not 
 Each frame draws into the framebuffer page shown 2 flips ago (triple buffering) and remembers
 per page what it drew, so only changed parts are redrawn and the visible page is never touched.
 """
-import select, subprocess, time
+import math, select, subprocess, time
 
 import numpy as np
 
@@ -17,17 +17,18 @@ from .fb import Framebuffer
 from .gfx import text_strip
 from .inputdev import Input
 from .launcher import Launcher, default_entries, settings_entries
-from .render import Renderer
+from .render import shared_renderer, MINI, MINI_CW, MINI_CH, matrix
 from .stats import StatsPanel
 from .title import TitleAnim
 from . import boot, power
 from .transition import Slide
+from .flight import Flight, badge_angles, carousel_angles
 
 
 class Shell:
     def __init__(self):
         self.fb = Framebuffer()
-        self.renderer = Renderer()
+        self.renderer = shared_renderer()
         self.input = Input()
         self.entries = default_entries()
 
@@ -61,6 +62,7 @@ class Shell:
         self.power_down_t, self.power_handled = None, False
         self.menu, self.prev_mode = None, "launcher"
         self.trans, self.trans_target, self.launcher_snap = None, None, None
+        self.flight = None                     # the open app's icon flight (closing replays it)
         self.trans_live = None                 # carousel whose spin advances during a transition
         self.held_events = []                 # touches made while an app is sliding open
         self.warm = [en.app for en in self.entries if en.app is not None]   # apps to pre-render
@@ -133,6 +135,7 @@ class Shell:
         self.home.reset_position()
         self.launcher = self.home; self.carousel_is_home = True
         self.launcher_snap = self.carousel_frame(self.home, "Welcome, " + GREET_NAME, now)
+        self.flight = None                    # no carousel object to fly back to
         if self.app is not app:
             self.app = app
             app.on_open()
@@ -183,6 +186,7 @@ class Shell:
             self.draw_region(buf, "app", self.app.key(now), lambda: self.app.render(now))
             self.draw_title(buf, ("app", self.app.name),
                             lambda: text_strip("‹ " + self.app.name, 28, ACCENT, TITLE_H, x=16))
+            self.draw_badge(buf, self.app, now)
         self.fb.show(self.page)
         self.page = (self.page + 1) % NPAGES
         self.count_fps()
@@ -197,6 +201,19 @@ class Shell:
             self.fps, self.fps_t0 = 15 / (t - self.fps_t0), t
 
     # ---- drawing helpers ----------------------------------------------------------------------------
+    BADGE_COLS, BADGE_ROWS = 13, 9                       # mini cells (5 x 7 px): 65 x 63 px
+    BADGE_X = W - 14 - BADGE_COLS * MINI_CW
+
+    def draw_badge(self, buf, app, now):
+        """The app's launcher icon, small and slowly spinning, at the right of its title bar."""
+        if app.icon_shape is None:
+            return
+        x, y = self.BADGE_X, 2
+        buf[y:y + self.BADGE_ROWS * MINI_CH, x:x + self.BADGE_COLS * MINI_CW] = 0
+        m9 = matrix(*badge_angles(now))
+        self.renderer.view(buf, app.icon_shape, m9, self.BADGE_COLS * 1.45, self.BADGE_COLS,
+                           self.BADGE_ROWS, x, y, MINI, MINI_CW, MINI_CH)
+
     def draw_title(self, buf, key, render):
         if self.shown["title"][self.page] != key:
             buf[TITLE_Y:TITLE_Y + TITLE_H] = render()
@@ -234,32 +251,37 @@ class Shell:
             buf[:] = 0
             self.shown["base"][self.page] = base
 
-    def carousel_frame(self, carousel, title_text, now):
+    def carousel_frame(self, carousel, title_text, now, skip_current=False):
         """Full-screen image of a carousel (title + its band) for slide transitions. The home
         greeting is centred (matching the live home title); sub-menu titles are left-aligned
         next to their back chevron."""
         f = np.zeros((H, W, 4), np.uint8)
         x = None if carousel is self.home else 16          # None = centred
         f[TITLE_Y:TITLE_Y + TITLE_H] = text_strip(title_text, 28, ACCENT, TITLE_H, x=x)
-        f[TOP:TOP + BAND] = carousel.render_band(self.renderer)
+        f[TOP:TOP + BAND] = carousel.render_band(self.renderer, skip_current=skip_current)
         return f
 
-    def app_frame(self, app, now):
+    def app_frame(self, app, now, badge=True):
         """Full-screen image of an app as it will appear (title + app area)."""
         f = np.zeros((H, W, 4), np.uint8)
         f[TITLE_Y:TITLE_Y + TITLE_H] = text_strip("\u2039 " + app.name, 28, ACCENT, TITLE_H, x=16)
         f[TOP:H] = app.render(now)
+        if badge:
+            self.draw_badge(f, app, now)
         return f
 
-    def start_transition(self, back, front, opening, target,
-                         live_carousel=None, live_side=None, live_title=""):
-        """live_carousel keeps spinning during the slide (rendered live on live_side)."""
-        self.trans_live = live_carousel
+    def start_transition(self, back, front, opening, target, live_carousel=None, live_side=None,
+                         live_title="", skip_current=False, overlay=None):
+        """live_carousel keeps spinning during the slide (rendered live on live_side, without
+        its centred object if skip_current); overlay(buf, e, now) draws over each frame."""
+        self.trans_live = live_carousel           # its sway keeps advancing (see draw_transition)
         live_fn = None
-        if live_carousel is not None:
+        if live_carousel is not None and not skip_current:
+            # re-render it each frame so it keeps moving. Not when its centred object is the one
+            # flying (skip_current): nothing else in it moves, so the static back is enough.
             live_fn = lambda now: self.carousel_frame(live_carousel, live_title, now)
         self.trans = Slide(back, front, self.renderer, time.monotonic(), opening,
-                           live_fn=live_fn, live_side=live_side)
+                           live_fn=live_fn, live_side=live_side, overlay=overlay)
         self.held_events = []
         self.trans_target, self.mode = target, "transition"
         self.shown["full"] = [None] * NPAGES
@@ -280,12 +302,20 @@ class Shell:
             self.trans.draw(buf, now)
             self.shown["full"][self.page] = key
 
-    def open_app(self, app):
+    def open_app(self, app, entry=None):
+        """Slide the app in; its launcher object (entry) flies up into the title-bar badge."""
         now = time.monotonic()
-        self.launcher_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()   # screen we came from
+        snap = self.fb.pages[(self.page - 1) % NPAGES].copy()          # screen we came from
+        self.flight = None
+        if entry is not None and app.icon_shape is not None:
+            self.flight = Flight(app.icon_shape, lambda: carousel_angles(entry), self.renderer)
+            y0, y1, x0, x1 = self.flight.rect()
+            snap[y0:y1, x0:x1] = 0                                     # it leaves the carousel
+        self.launcher_snap = snap
         self.app = app
         app.on_open()
-        self.start_transition(self.launcher_snap, self.app_frame(app, now), True, "app")
+        self.start_transition(snap, self.app_frame(app, now, badge=self.flight is None), True, "app",
+                              overlay=self.flight.draw if self.flight else None)
 
     def open_settings(self):
         now = time.monotonic()
@@ -328,11 +358,16 @@ class Shell:
                               live_side="back", live_title="Welcome, " + GREET_NAME)
 
     def close_app(self):
+        """Slide the app out; the badge flies back down into its place in the carousel."""
         visible = self.fb.pages[(self.page - 1) % NPAGES].copy()
         back = self.launcher_snap if self.launcher_snap is not None else np.zeros_like(visible)
         title = "Welcome, " + GREET_NAME if self.carousel_is_home else "\u2039 Settings"
+        fl, self.flight = self.flight, None
+        if fl is not None:
+            visible[:TOP, self.BADGE_X:] = 0                           # the badge is the flyer
         self.start_transition(back, visible, False, "launcher", live_carousel=self.launcher,
-                              live_side="back", live_title=title)
+                              live_side="back", live_title=title, skip_current=fl is not None,
+                              overlay=fl.draw if fl else None)
         self.app.on_close()
         self.app = None
 
@@ -373,7 +408,7 @@ class Shell:
                 en = self.launcher.on_touch(kind, x, y, t, now)
                 if en is not None:
                     if en.app is not None:
-                        self.open_app(en.app)
+                        self.open_app(en.app, en)
                     elif en.opens == "settings":
                         self.open_settings()
 

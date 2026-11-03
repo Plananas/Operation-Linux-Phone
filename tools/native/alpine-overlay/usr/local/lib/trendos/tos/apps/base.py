@@ -1,9 +1,16 @@
 """Base class for apps."""
+from ..render import shared_renderer
 
 
 class App:
     name = "App"
     keep_awake = False          # True: the screen doesn't auto-sleep while this app is open
+    icon_shape = None           # set by its launcher Entry: shown spinning in the title bar
+
+    @property
+    def renderer(self):
+        """The shared 3D renderer: self.renderer.view(buf, shape, m9, K, cols, rows, x, y, tiles)."""
+        return shared_renderer()
 
     def background(self, now):
         """Called by the shell about once a second, even when the app is closed or the screen

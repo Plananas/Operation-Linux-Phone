@@ -15,13 +15,17 @@ def _ease(x):
 
 
 class Slide:
-    def __init__(self, back, front, renderer, now, opening=True, live_fn=None, live_side=None):
+    def __init__(self, back, front, renderer, now, opening=True, live_fn=None, live_side=None,
+                 overlay=None):
         """back: frame behind; front: frame sliding in/out. If live_fn(now) is given it re-renders
-        one side each frame (live_side "front" or "back") so that side keeps animating."""
+        one side each frame (live_side "front" or "back") so that side keeps animating.
+        overlay(buf, e, now) draws on top of each frame; e = how far the front is in (0..1),
+        e.g. the launcher object flying to the app's badge (tos/flight.py)."""
         self.back, self.front, self.r = back, front, renderer
         self.t0, self.opening = now, opening
         self.dur = OPEN_T if opening else CLOSE_T
         self.live_fn, self.live_side = live_fn, live_side
+        self.overlay = overlay
 
     def done(self, now):
         return now - self.t0 >= self.dur
@@ -43,3 +47,5 @@ class Slide:
             buf[:] = front
         else:
             self.r.slide(buf, back, front, int(SLIDE * (1 - e)), 1 - (1 - DIM) * e, e)
+        if self.overlay is not None:
+            self.overlay(buf, e, now)

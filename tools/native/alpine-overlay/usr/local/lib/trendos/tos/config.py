@@ -28,8 +28,9 @@ TITLE = "TREND OS"
 GREET_NAME = "Robin"
 ACCENT, GREY, DIM, TEXT = (0, 255, 140), (130, 130, 130), (60, 60, 60), (220, 220, 220)
 PALETTE = [(255, 70, 70), (70, 255, 110), (80, 140, 255), (255, 215, 50),
-           (255, 80, 255), (50, 230, 230), (255, 150, 40), (230, 230, 230), (30, 215, 96)]
-RED, GREEN, BLUE, YELLOW, MAGENTA, CYAN, ORANGE, WHITE, SPOTIFY = range(9)   # PALETTE indices
+           (255, 80, 255), (50, 230, 230), (255, 150, 40), (230, 230, 230), (30, 215, 96),
+           (30, 110, 62)]
+RED, GREEN, BLUE, YELLOW, MAGENTA, CYAN, ORANGE, WHITE, SPOTIFY, DIMGREEN = range(10)   # PALETTE indices
 SHADES = " .,-~:;=!*#$@"          # ASCII shading, index 0 = empty cell
 NS = len(SHADES)
 

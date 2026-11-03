@@ -20,9 +20,12 @@ import json, math, os, subprocess, threading, time, wave
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-from ..config import W, TOP, APP_H, ACCENT
+from ..config import W, TOP, APP_H, ACCENT, CW, CH
 from ..gfx import font, to_rgbx, text_len, draw_text
-from ..ui import BG, PANEL, DIM, MID, GHOST, FLARE, ERR, Keys, card, mix
+from ..models import Shape
+from ..models.icons import CLOCK_HANDS, _hand, clock_face, hand_angles
+from ..render import TILES, card_tiles, matrix
+from ..ui import BG, PANEL, SCAN, DIM, MID, GHOST, FLARE, ERR, Keys, card, mix
 from .base import App
 
 ALARMS_FILE = "/var/lib/trendos/alarms.json"
@@ -41,7 +44,50 @@ ALARMS = (14, 316, W - 14, APP_H - 14)
 DW, DH, DT = 84, 150, 17                       # 7-segment digit size + segment thickness
 DIG_Y = 58
 COLON_W, GAP = 30, 12
-ROW_Y0, ROW_H = 372, 80
+ROW_Y0, ROW_H = 448, 67
+VIS_FPS = 15
+FACE_COLS, FACE_ROWS = 13, 9                   # 3D clock in the alarms card header (104 x 108 px)
+FACE_X, FACE_Y = W - 30 - FACE_COLS * CW, ALARMS[1] + 14
+RING_COLS, RING_ROWS = 30, 16                  # big 3D clock on the ringing screen (240 x 192 px)
+RING_X, RING_Y, BOUNCE = (W - RING_COLS * CW) // 2, 304, 10
+class Clock3D:
+    """The 3D clock as one Shape built once (face + hands at 12 o'clock); setting the time just
+    rotates the hands' points, normals and face centres in place (the renderer keeps pointers
+    to these arrays), so a frame costs microseconds instead of rebuilding the model."""
+
+    def __init__(self):
+        face = clock_face()
+        hands = [_hand(0.0, *spec) for spec in CLOCK_HANDS]
+        self.shape = Shape.combine(face, *hands)
+        self.parts = []                        # (point slice, face slice, original pts, nrm, cen)
+        p0, f0 = len(face.pts), len(face.fnrm)
+        for hnd in hands:
+            ps, fs = slice(p0, p0 + len(hnd.pts)), slice(f0, f0 + len(hnd.fnrm))
+            s = self.shape
+            self.parts.append((ps, fs, s.pts[ps].copy(), s.fnrm[fs].copy(), s.fcen[fs].copy()))
+            p0, f0 = ps.stop, fs.stop
+
+    def at(self, t):
+        lt = time.localtime(t)
+        s = self.shape
+        for (ps, fs, pts, nrm, cen), a in zip(self.parts, hand_angles(lt.tm_hour, lt.tm_min, lt.tm_sec + t % 1)):
+            c, sn = math.cos(a), math.sin(a)             # clockwise by a about z
+            R = np.array([[c, sn, 0], [-sn, c, 0], [0, 0, 1]], np.float32)
+            s.pts[ps] = pts @ R.T
+            s.fnrm[fs] = nrm @ R.T
+            s.fcen[fs] = cen @ R.T
+        return s
+
+
+_clock3d = None
+
+
+def clock_shape(t):
+    """The 3D clock showing the local time at epoch t, with a sweeping second hand."""
+    global _clock3d
+    if _clock3d is None:
+        _clock3d = Clock3D()
+    return _clock3d.at(t)
 
 
 def _digit_x():
@@ -165,6 +211,7 @@ class ClockApp(App):
         self.pressed, self.repeat_t = None, 0.0
         self._stop, self._player = threading.Event(), None
         self._base = None
+        self._slow_shown, self._img, self._buf = None, None, None
 
     keep_awake = property(lambda self: self.mode == "ring")
 
@@ -267,8 +314,8 @@ class ClockApp(App):
 
     def _keys(self):
         if self.mode == "ring":
-            return Keys([("snooze", 14, 520, 220, 120, "snooze 5", "step", 34),
-                         ("stop", 246, 520, 220, 120, "stop", "on", 40)])
+            return Keys([("snooze", 14, 530, 220, 120, "snooze 5", "step", 34),
+                         ("stop", 246, 530, 220, 120, "stop", "on", 40)])
         if self.mode == "edit":
             hx = DIG_XS[0] + DW + GAP // 2 - 92        # centre of the hour digits - half the pair
             mx = DIG_XS[2] + DW + GAP // 2 - 92
@@ -283,10 +330,10 @@ class ClockApp(App):
         ks = []
         for i, a in enumerate(self.alarms):
             y = ROW_Y0 + i * ROW_H
-            ks.append((f"t{i}", 370, y + 12, 80, 52, "on" if a["on"] else "off", "on" if a["on"] else "off", 28))
+            ks.append((f"t{i}", 370, y + 6, 80, 48, "on" if a["on"] else "off", "on" if a["on"] else "off", 28))
         if len(self.alarms) < MAX_ALARMS:
             y = ROW_Y0 + len(self.alarms) * ROW_H
-            ks.append(("new", 30, y + 10, 420, 56, "+ new alarm", "dim", 26))
+            ks.append(("new", 30, y + 4, 420, 52, "+ new alarm", "dim", 26))
         return Keys(ks)
 
     def touch(self, ev, x, y):
@@ -358,11 +405,9 @@ class ClockApp(App):
                 self.mode = "edit"
 
     # ---- drawing ------------------------------------------------------------------------------
-    def key(self, now):
+    def _slow_key(self):
+        """What the 2D layer shows (redrawn with PIL only when this changes)."""
         t = time.time()
-        if self.pressed in ("h-", "h+", "m-", "m+") and time.monotonic() >= self.repeat_t:
-            self._adjust(self.pressed)
-            self.repeat_t = time.monotonic() + REPEAT_EVERY
         lt = time.localtime(t)
         base = (self.mode, self.pressed, json.dumps(self.alarms), json.dumps(self.edit), self.snooze_until)
         if self.mode == "ring":
@@ -370,6 +415,14 @@ class ClockApp(App):
         if self.mode == "edit":
             return base
         return base + (lt.tm_min, lt.tm_sec, int(t * 2) % 2)   # colon blinks
+
+    def key(self, now):
+        if self.pressed in ("h-", "h+", "m-", "m+") and time.monotonic() >= self.repeat_t:
+            self._adjust(self.pressed)
+            self.repeat_t = time.monotonic() + REPEAT_EVERY
+        if self.mode == "edit":
+            return self._slow_key()
+        return self._slow_key() + (int(now * VIS_FPS),)        # the 3D clock moves
 
     def _background_image(self, which):
         if self._base is None:
@@ -386,18 +439,42 @@ class ClockApp(App):
         return self._base[which].copy()
 
     def render(self, now):
-        im = self._background_image(self.mode)
-        d = ImageDraw.Draw(im)
+        slow = self._slow_key()
+        if slow != self._slow_shown:                           # 2D layer: PIL, a few times/s
+            im = self._background_image(self.mode)
+            d = ImageDraw.Draw(im)
+            t = time.time()
+            lt = time.localtime(t)
+            if self.mode == "edit":
+                self._render_edit(im, d)
+            elif self.mode == "ring":
+                self._render_ring(im, d, t, lt)
+            else:
+                self._render_main(im, d, t, lt)
+            self._keys().draw(im, self.pressed)
+            self._img = to_rgbx(im)
+            self._buf = self._img.copy()
+            self._slow_shown = slow
+        self._draw_3d(now)
+        return self._buf
+
+    def _draw_3d(self, now):
+        """The 3D clock over the 2D layer (restored first): swaying gently on the main screen,
+        shaking and bouncing while an alarm rings."""
         t = time.time()
-        lt = time.localtime(t)
-        if self.mode == "edit":
-            self._render_edit(im, d)
+        if self.mode == "main":
+            x, y, cols, rows = FACE_X, FACE_Y, FACE_COLS, FACE_ROWS
+            self._buf[y:y + rows * CH, x:x + cols * CW] = self._img[y:y + rows * CH, x:x + cols * CW]
+            m9 = matrix(0.22, 0.12 * math.sin(0.8 * now), 0.45 * math.sin(0.5 * now), 0.0)
+            self.renderer.view(self._buf, clock_shape(t), m9, cols * 1.55, cols, rows, x, y,
+                               card_tiles(y, PANEL, SCAN, ALARMS[1]))
         elif self.mode == "ring":
-            self._render_ring(im, d, t, lt)
-        else:
-            self._render_main(im, d, t, lt)
-        self._keys().draw(im, self.pressed)
-        return to_rgbx(im)
+            x, y, cols, rows = RING_X, RING_Y, RING_COLS, RING_ROWS
+            h = rows * CH + BOUNCE
+            self._buf[y - BOUNCE:y + h, x:x + cols * CW] = self._img[y - BOUNCE:y + h, x:x + cols * CW]
+            dy = -int(BOUNCE * abs(math.sin(7 * now)))
+            m9 = matrix(0.18, 0.0, 0.35 * math.sin(2.5 * now), 0.30 * math.sin(34 * now))
+            self.renderer.view(self._buf, clock_shape(t), m9, cols * 1.2, cols, rows, x, y + dy, TILES)
 
     def _sync_text(self):
         try:
@@ -424,27 +501,29 @@ class ClockApp(App):
         draw_text(im, (W - text_len(date, 22)) / 2, CLOCK[1] + 248, date, 22, MID)
         # alarms
         nxt = self.next_alarm()
+        y0 = ALARMS[1] + 16
         if nxt:
             mins = int((nxt - t) // 60) + 1
-            when = time.strftime("%a %H:%M", time.localtime(nxt))
-            note = f"> next: {when}  (in {mins // 60} h {mins % 60} min)" if mins >= 60 else \
-                f"> next: {when}  (in {mins} min)"
-            if self.snooze_until and nxt == self.snooze_until:
-                note += "  snoozed"
+            snoozed = self.snooze_until and nxt == self.snooze_until
+            draw_text(im, 30, y0, "> snoozed until" if snoozed else "> next alarm", 17, MID)
+            draw_text(im, 30, y0 + 26, time.strftime("%a %H:%M", time.localtime(nxt)), 40, ACCENT)
+            left = f"in {mins // 60} h {mins % 60} min" if mins >= 60 else f"in {mins} min"
+            draw_text(im, 30, y0 + 76, left, 20, MID)
         else:
-            note = "> no alarms on"
-        draw_text(im, 30, ALARMS[1] + 16, note, 17, MID)
+            draw_text(im, 30, y0, "> no alarms on", 17, MID)
+            draw_text(im, 30, y0 + 30, "tap + new alarm", 22, DIM)
+        d.line([(30, ROW_Y0 - 6), (W - 30, ROW_Y0 - 6)], fill=(0, 28, 16))
         for i, a in enumerate(self.alarms):
             y = ROW_Y0 + i * ROW_H
             col = ACCENT if a["on"] else MID
             if self.pressed == f"row{i}":
-                d.rounded_rectangle([24, y + 4, 360, y + ROW_H - 6], 7, fill=(0, 30, 17))
-            draw_text(im, 34, y + 12, f"{a['h']:02d}:{a['m']:02d}", 46, col)
+                d.rounded_rectangle([24, y + 2, 360, y + ROW_H - 6], 7, fill=(0, 30, 17))
+            draw_text(im, 34, y + 10, f"{a['h']:02d}:{a['m']:02d}", 40, col)
             if a["days"]:
                 for k, c in enumerate(DAYS):
-                    draw_text(im, 180 + k * 24, y + 28, c, 22, (col if k in a["days"] else DIM))
+                    draw_text(im, 168 + k * 24, y + 22, c, 22, (col if k in a["days"] else DIM))
             else:
-                draw_text(im, 180, y + 28, "once", 22, col)
+                draw_text(im, 168, y + 22, "once", 22, col)
             if i < len(self.alarms) - 1 or len(self.alarms) < MAX_ALARMS:
                 d.line([(30, y + ROW_H - 2), (W - 30, y + ROW_H - 2)], fill=(0, 28, 16))
 
@@ -463,7 +542,6 @@ class ClockApp(App):
         col = FLARE if flash else ACCENT
         draw_hhmm(im, lt.tm_hour, lt.tm_min, True, col)
         draw_text(im, 30, CLOCK[1] + 14, "> " + self.ring_label, 17, ACCENT)
-        msg = "WAKE UP" if flash else ""
-        if msg:
-            draw_text(im, (W - text_len(msg, 64)) / 2, 360, msg, 64, ACCENT)
-        draw_text(im, (W - text_len("volume key = snooze", 17)) / 2, 470, "volume key = snooze", 17, MID)
+        if flash:
+            draw_text(im, CLOCK[2] - 16 - text_len("WAKE UP", 17), CLOCK[1] + 14, "WAKE UP", 17, FLARE)
+        draw_text(im, (W - text_len("volume key = snooze", 17)) / 2, 502, "volume key = snooze", 17, MID)

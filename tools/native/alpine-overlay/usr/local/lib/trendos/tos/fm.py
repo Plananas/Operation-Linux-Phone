@@ -1,14 +1,15 @@
 """FM radio driver: Broadcom BCM43430A1 FM core, analog out -> codec line-in -> headphones.
 
-Raw HCI over the Bluetooth UART (no BlueZ); wired headphones are the antenna. Blocking calls:
-use it from one background thread (the Radio app does). Command line: /usr/local/sbin/fmctl.
+Vendor HCI commands to the Bluetooth/FM chip (tos/btchip.py): straight over the UART when
+Bluetooth is off, or through BlueZ's hci0 when bt-up has attached it (the chip then stays
+powered for Bluetooth). Wired headphones are the antenna. Blocking calls: use it from one
+background thread (the Radio app does). Command line: /usr/local/sbin/fmctl.
 See PLAN.md "FM radio" for how this was worked out and what NOT to do (digital FM reboots).
 """
-import os, select, struct, subprocess, termios, time
+import subprocess, time
 
-UART, RFKILL = "/dev/ttyS0", "/sys/class/rfkill/rfkill0/state"
-PATCH = "/data/bt/BCM43430A1.hcd"     # copied once from Android's /system (see _patch())
-PATCH_SRC = "/mnt/system/vendor/firmware/BCM43430A1_001.002.009.0018.0033_ORC.hcd"
+from . import btchip
+
 CARD = "sprdphone"
 BAND = (87.5, 108.0)                  # MHz, Europe/US
 STEP = 0.1
@@ -25,54 +26,13 @@ def clamp(mhz):
     return round(min(BAND[1], max(BAND[0], mhz)) / STEP) * STEP
 
 
-# ---- raw HCI --------------------------------------------------------------------------------
-def _open():
-    fd = os.open(UART, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    a = termios.tcgetattr(fd)
-    a[0] = a[1] = a[3] = 0
-    a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL | termios.CRTSCTS
-    a[4] = a[5] = termios.B115200
-    a[6][termios.VMIN] = a[6][termios.VTIME] = 0
-    termios.tcsetattr(fd, termios.TCSANOW, a)
-    termios.tcflush(fd, termios.TCIOFLUSH)
-    return fd
+def _w(t, reg, *vals):
+    t.cmd(0xFC15, bytes([reg, 0] + list(vals)))
 
 
-def _close(fd):
-    termios.tcflush(fd, termios.TCIOFLUSH)   # never block in close() on unsent bytes
-    os.close(fd)
-
-
-def _cmd(fd, opcode, params=b"", timeout=1.5):
-    os.write(fd, struct.pack("<BHB", 1, opcode, len(params)) + params)
-    buf, end = b"", time.time() + timeout
-    while time.time() < end:
-        if select.select([fd], [], [], max(0, end - time.time()))[0]:
-            buf += os.read(fd, 300)
-            if len(buf) >= 3 and buf[0] == 4 and len(buf) >= 3 + buf[2]:
-                return buf[:3 + buf[2]]
-    raise IOError(f"no HCI reply to 0x{opcode:04x}")
-
-
-def _w(fd, reg, *vals):
-    _cmd(fd, 0xFC15, bytes([reg, 0] + list(vals)))
-
-
-def _r(fd, reg, n=1):
-    e = _cmd(fd, 0xFC15, bytes([reg, 1, n]))
-    return int.from_bytes(e[9:9 + n], "little")
-
-
-def _patch():
-    """Path of the chip's firmware patch, copied from Android's /system on first use."""
-    if not os.path.exists(PATCH):
-        os.makedirs(os.path.dirname(PATCH), exist_ok=True)
-        os.makedirs("/mnt/system", exist_ok=True)
-        if subprocess.run(["mountpoint", "-q", "/mnt/system"]).returncode != 0:
-            subprocess.run(["mount", "-o", "ro", "/dev/mmcblk0p24", "/mnt/system"], check=True)
-        with open(PATCH_SRC, "rb") as s, open(PATCH, "wb") as d:
-            d.write(s.read())
-    return PATCH
+def _r(t, reg, n=1):
+    e = t.cmd(0xFC15, bytes([reg, 1, n]))     # 0e len ncmd opcode(2) status reg ... data
+    return int.from_bytes(e[8:8 + n], "little")
 
 
 # ---- codec (analog line-in -> headphones) -------------------------------------------------------
@@ -104,86 +64,81 @@ def set_volume(v):
 
 
 # ---- the radio ----------------------------------------------------------------------------------
+def _link():
+    """A link to a chip that is already running."""
+    return btchip.HciSocket() if btchip.bluez_attached() else btchip.RawUart()
+
+
 class FM:
-    """Power, tune, read signal. Keeps the UART open while on (retuning is then ~10 ms)."""
+    """Power, tune, read signal. Keeps the chip link open while on (retuning is then ~10 ms)."""
 
     def __init__(self):
-        self.fd = None
+        self.t = None              # btchip.RawUart or btchip.HciSocket
 
     @property
     def is_on(self):
-        return self.fd is not None
+        return self.t is not None
 
     def on(self, mhz, volume=12):
-        """Power up (~4 s: rfkill cycle + firmware patch download) and tune."""
-        patch = _patch()
-        if self.fd is not None:
+        """Power up and tune (~4 s from cold: rfkill cycle + firmware patch download; instant
+        when Bluetooth already has the chip running)."""
+        if self.t is not None:
             self.off()
-        # The UART only works after an rfkill off->on (EIO before); that toggle also powers the chip.
-        with open(RFKILL, "w") as f: f.write("0")
-        time.sleep(0.3)
-        with open(RFKILL, "w") as f: f.write("1")
-        time.sleep(0.6)
-        fd = _open()
+        self.t = btchip.HciSocket() if btchip.bluez_attached() else btchip.boot_raw()
         try:
-            _cmd(fd, 0x0C03)                                   # HCI reset
-            _cmd(fd, 0xFC2E); time.sleep(0.05)                 # download minidriver
-            d, i = open(patch, "rb").read(), 0
-            while i < len(d):                                  # .hcd = a list of HCI commands
-                op, ln = struct.unpack_from("<HB", d, i)
-                _cmd(fd, op, d[i + 3:i + 3 + ln]); i += 3 + ln
-            time.sleep(0.25)
-            _cmd(fd, 0x0C03, timeout=2)                        # reset -> run the patched firmware
-            _cmd(fd, 0xFC27, bytes(12))                        # sleep mode off (else it dozes, CTS stalls the UART)
-            _w(fd, REG_POWER, 0x01); time.sleep(0.1)           # FM on (0x03 = FM + RDS)
-            _w(fd, REG_CTRL, CTRL_STEREO)
-            _w(fd, REG_AUDIO0, AUDIO_DAC_LR, 0x00)
+            _w(self.t, REG_POWER, 0x01); time.sleep(0.1)           # FM on (0x03 = FM + RDS)
+            _w(self.t, REG_CTRL, CTRL_STEREO)
+            _w(self.t, REG_AUDIO0, AUDIO_DAC_LR, 0x00)
         except Exception:
-            _close(fd)
+            self.off()
             raise
-        self.fd = fd
         self.tune(mhz)
         codec_on(volume)
 
     def tune(self, mhz):
         f = int(round(clamp(mhz) * 1000)) - 64000
-        _w(self.fd, REG_FREQ0, f & 0xFF); _w(self.fd, REG_FREQ1, f >> 8); _w(self.fd, REG_TUNE_MODE, 0x01)
+        _w(self.t, REG_FREQ0, f & 0xFF); _w(self.t, REG_FREQ1, f >> 8); _w(self.t, REG_TUNE_MODE, 0x01)
 
     def freq(self):
-        return (_r(self.fd, REG_FREQ0, 2) + 64000) / 1000
+        return (_r(self.t, REG_FREQ0, 2) + 64000) / 1000
 
     def rssi(self):
-        return _r(self.fd, REG_RSSI)
+        return _r(self.t, REG_RSSI)
 
     def off(self):
         codec_off()
+        t, self.t = self.t, None
         try:
-            fd = self.fd if self.fd is not None else _open()
+            if t is None:
+                t = _link()
             try:
-                _w(fd, REG_AUDIO0, AUDIO_MUTE, 0x00); _w(fd, REG_POWER, 0x00)
+                _w(t, REG_AUDIO0, AUDIO_MUTE, 0x00); _w(t, REG_POWER, 0x00)
             finally:
-                _close(fd)
+                t.close()
         except (OSError, IOError):
             pass                                               # chip already off
-        self.fd = None
-        with open(RFKILL, "w") as f: f.write("0")
+        if not btchip.bluez_attached():
+            try:
+                btchip.power(False)                            # nobody else needs the chip
+            except (OSError, IOError):
+                pass
 
 
 def main(argv):
-    """fmctl on [MHz] | tune MHz | off   (tune reopens the UART of a radio left on by `on`)."""
+    """fmctl on [MHz] | tune MHz | off   (tune reopens the link to a radio left on by `on`)."""
     cmd = argv[0] if argv else ""
     fm = FM()
     if cmd == "on":
         fm.on(float(argv[1]) if len(argv) > 1 else 100.0)
         print(f"on {fm.freq():.1f} MHz  rssi {fm.rssi()}")
-        _close(fm.fd)                                          # leave the chip running
+        fm.t.close()                                           # leave the chip running
     elif cmd == "tune" and len(argv) > 1:
-        fm.fd = _open()
+        fm.t = _link()
         try:
             fm.tune(float(argv[1])); time.sleep(0.15)
             print(f"tuned {fm.freq():.1f} MHz  rssi {fm.rssi()}")
         finally:
-            _close(fm.fd)
+            fm.t.close()
     elif cmd == "off":
         fm.off()
     else:

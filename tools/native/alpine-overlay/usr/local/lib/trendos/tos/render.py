@@ -15,19 +15,42 @@ from .config import (CW, CH, COLS, ROWS, NS, SHADES, PALETTE, LIGHT, CAM_Z, ASPE
 from .gfx import art_font, blit
 
 # ---- tile atlas: tiles[colour * NS + shade] = CH x CW x 4 RGBX --------------------------
-def _make_tiles():
-    t = np.zeros((len(PALETTE) * NS, CH, CW, 4), np.uint8)
-    f = art_font(FONT_PX)
+def make_tiles(cw=CW, ch=CH, font_px=FONT_PX, bg_rows=None, offset=(1, -1)):
+    """Tile atlas [colour * NS + shade] of cw x ch RGBX character cells. bg_rows = optional
+    (ch, 3) colour per pixel row drawn behind the glyphs (e.g. a card's panel + scanlines, so
+    3D objects sit on cards without black boxes); cells are max(background, glyph)."""
+    t = np.zeros((len(PALETTE) * NS, ch, cw, 4), np.uint8)
+    f = art_font(font_px)
     for s, c in enumerate(SHADES):
-        g = Image.new("L", (CW, CH), 0)
-        ImageDraw.Draw(g).text((1, -1), c, fill=255, font=f)
+        g = Image.new("L", (cw, ch), 0)
+        ImageDraw.Draw(g).text(offset, c, fill=255, font=f)
         mask = np.asarray(g, np.float32)[..., None] / 255.0
         bright = 0.35 + 0.65 * (s / (NS - 1))                 # denser characters are brighter
         for col, rgb in enumerate(PALETTE):
             t[col * NS + s, :, :, :3] = (mask * np.array(rgb, np.float32) * bright).astype(np.uint8)
+    if bg_rows is not None:
+        bg = np.zeros((ch, cw, 4), np.uint8)
+        bg[:, :, :3] = np.asarray(bg_rows, np.uint8)[:, None, :]
+        t = np.maximum(t, bg[None])
     return t
 
-TILES = _make_tiles()
+TILES = make_tiles()
+_atlases = {}
+
+
+def card_tiles(y, panel, scan, card_y0, cw=CW, ch=CH, font_px=FONT_PX):
+    """Atlas whose cell background matches a ui.card() at screen/app row y (scanlines every
+    3 px from card_y0 + 4), for a viewport whose top is at y."""
+    rows = [scan if (y + k - card_y0 - 4) % 3 == 0 else panel for k in range(ch)]
+    key = (tuple(map(tuple, rows)), cw, ch, font_px)
+    if key not in _atlases:
+        _atlases[key] = make_tiles(cw, ch, font_px, rows)
+    return _atlases[key]
+
+
+MINI_CW, MINI_CH = 5, 7          # small cells for icon badges (title bar)
+MINI = make_tiles(MINI_CW, MINI_CH, 7, offset=(0, -1))
+MINI[:, :, :, :3] = np.minimum(255, MINI[:, :, :, :3].astype(np.uint16) * 3 // 2).astype(np.uint8)   # tiny glyphs: brighter
 
 
 # ---- rotations ---------------------------------------------------------------------------------
@@ -53,8 +76,9 @@ def boot_matrix(t):
 # ---- numpy reference / fallback ------------------------------------------------------------------
 _LIGHT = np.array(LIGHT, np.float32)
 
-def grid_numpy(m9, shape, K=K_BOOT):
-    """ROWS x COLS tile-index grid (reference implementation; the C core matches it)."""
+def grid_numpy(m9, shape, K=K_BOOT, cols=COLS, rows=ROWS, aspect=ASPECT):
+    """rows x cols tile-index grid (reference implementation; the C core matches it)."""
+    ROWS, COLS, ASPECT = rows, cols, aspect
     R = np.array(m9, np.float32).reshape(3, 3)
     fn = shape.fnrm @ R.T
     fc = shape.fcen @ R.T
@@ -160,6 +184,28 @@ class Renderer:
         self.lib.slide_frame(dst.ctypes.data, back.ctypes.data, front.ctypes.data,
                              dst.strides[0], dst.shape[0], dy, qi, ai)
 
+    def view(self, dst, shape, m9, K, cols, rows, x, y, tiles=TILES, cw=CW, ch=CH):
+        """Render shape into a cols x rows cell viewport of dst (RGBX array) with its top-left
+        at pixel (x, y); the object's centre maps to the viewport centre, K = projection scale
+        in cells. Only non-empty cells are written (restore the background first). Returns
+        the touched rect (y0, y1, x0, x1)."""
+        aspect = cw / ch
+        if self.lib is None:
+            g = grid_numpy(m9, shape, K, cols, rows, aspect)
+            for r, c in np.argwhere(g):
+                yy, xx = y + r * ch, x + c * cw
+                if 0 <= yy and yy + ch <= dst.shape[0] and 0 <= xx and xx + cw <= dst.shape[1]:
+                    dst[yy:yy + ch, xx:xx + cw] = tiles[g[r, c]]
+            return (y, y + rows * ch, x, x + cols * cw)
+        self._m9[:] = m9
+        s = shape.cptr
+        self.lib.render_draw(s[0], s[1], s[2], s[3], s[4], s[5], s[6],
+                             ctypes.addressof(self._m9), K, cols, rows, aspect, CAM_Z,
+                             self._light.ctypes.data, NS, tiles.ctypes.data, ch, cw,
+                             dst.ctypes.data, dst.strides[0], dst.shape[1], dst.shape[0], x, y,
+                             ctypes.addressof(self._rect))
+        return tuple(self._rect)
+
     def grid(self, m9, shape, K=K_BOOT):
         """Tile-index grid (used to export boot animation frames)."""
         if self.lib is None:
@@ -170,3 +216,14 @@ class Renderer:
         self.lib.render_shape(s[0], s[1], s[2], s[3], s[4], s[5], s[6], ctypes.addressof(self._m9), K,
                               COLS, ROWS, ASPECT, CAM_Z, self._light.ctypes.data, NS, g.ctypes.data)
         return g
+
+
+_shared = None
+
+
+def shared_renderer():
+    """The one Renderer (C library handle) used by the shell and by apps' 3D views."""
+    global _shared
+    if _shared is None:
+        _shared = Renderer()
+    return _shared

@@ -11,5 +11,6 @@ from .calculator import CalculatorApp
 from .wifi import WifiApp
 from .radio import RadioApp
 from .clock import ClockApp
+from .bluetooth import BluetoothApp
 
-__all__ = ["App", "CalculatorApp", "WifiApp", "RadioApp", "ClockApp"]
+__all__ = ["App", "CalculatorApp", "WifiApp", "RadioApp", "ClockApp", "BluetoothApp"]

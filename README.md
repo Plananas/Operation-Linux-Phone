@@ -22,19 +22,29 @@ time (see *Getting out of trouble*).
 | **Leave it alone 2 minutes** | Screen turns off by itself |
 | **Plug in while switched off** | Charging screen. Hold Power 1.5 s to start TREND OS. Unplug = it switches off |
 
+The look: a retro CRT terminal (green phosphor, VT323 font, scanlines) with 3D objects drawn in
+shaded ASCII characters, demoscene style. Each app shows its home-screen object spinning in its
+title bar.
+
 **Apps so far:**
 - **Calculator** (the spinning plus sign) — green-phosphor terminal style, with history.
 - **Settings** (the sliders icon) — opens a second carousel. Inside it, **Wi-Fi** shows your
-  connection and nearby networks; tap a network and type the password on the on-screen keyboard.
+  connection (with 3D signal bars that follow the real signal) and nearby networks; tap a network and type the password on the on-screen keyboard.
+  **Bluetooth** is next to it: switch it on/off, tap **scan**, then tap your headphones or speaker
+  under *nearby* to pair and connect (put them in pairing mode first). Others see the phone as
+  "TREND OS".
 - **Clock** (the clock face) — big glowing time, date, and up to 4 alarms. Tap **+ new alarm**
   or an alarm to set the time and the days it repeats (no days = rings once). Alarms ring
   through the speaker even with the screen off or another app open; volume key = snooze 5 min.
+  A 3D clock with real moving hands sits next to the next alarm (it shakes when ringing).
   The phone sets its own time from the internet over Wi-Fi (UK time, summer time included).
 - **Radio** (the mast icon) — FM radio. **Plug in wired headphones first: they're the antenna.**
   Opening it switches the radio on (takes ~4 s), closing it switches it off. Drag or flick the
   tuning drum (or tap a number on it); `<` `>` step 0.1 MHz (hold to repeat), `<<` `>>` jump
   1 MHz, the middle key switches on/off, the **volume keys** set the volume. The scope and the
-  ASCII bars show the actual audio. It remembers your last station.
+  3D waterfall landscape show the actual audio. It remembers your last station. With Bluetooth
+  headphones or a speaker connected, the radio plays there (keep the wired headphones plugged in:
+  they're still the antenna).
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop
@@ -61,7 +71,7 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 | Problem | Fix |
 |---|---|
 | Screen frozen / weird | `ssh root@192.168.42.129 rc-service bootscreen restart` |
-| Phone won't boot TREND OS | Pull battery, hold **Vol-Down + Home + Power** (Download mode), then on the laptop: `heimdall flash --KERNEL firmware/extracted/boot-native7.img` (our kernel) or `boot-native6.img` (Samsung's kernel) |
+| Phone won't boot TREND OS | Pull battery, hold **Vol-Down + Home + Power** (Download mode), then on the laptop: `heimdall flash --KERNEL firmware/extracted/boot-native8.img` (our kernel) or `boot-native6.img` (Samsung's kernel) |
 | Want Android back | Same Download mode, then `heimdall flash --KERNEL firmware/extracted/boot.img` (stock) or `boot-root4.img` (rooted Android) |
 | Phone totally dead (no logo, no Download mode) | Emergency chip mode: battery out and back in, **hold Volume Up** while plugging in USB → screen stays black, laptop sees a "Spreadtrum" device. Recovering from there needs extra tools (not set up yet). |
 

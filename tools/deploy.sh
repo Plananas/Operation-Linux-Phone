@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 O=tools/native/alpine-overlay
 FILES="usr/local/bin/trendos.py usr/local/bin/mksound.py usr/local/bin/mkcharger.py
        usr/local/lib/trendos/tos usr/local/sbin etc/init.d/bootscreen etc/init.d/usbnet etc/local.d
-       etc/init.d/spotify etc/init.d/wifi etc/init.d/timesync etc/conf.d/hwclock etc/timezone
+       etc/init.d/spotify etc/init.d/wifi etc/init.d/timesync etc/init.d/btuart etc/init.d/btaudio etc/conf.d/hwclock etc/timezone
        var/lib/go-librespot/config.yml usr/local/share/trendos/fonts"
 echo "== copying files to $HOST"
 tar -C "$O" --owner=0 --group=0 --exclude=__pycache__ -cf - $FILES | ssh "$HOST" 'tar -C / -xf -'

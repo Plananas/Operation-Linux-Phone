@@ -36,6 +36,20 @@ class Shape:
                     tuple(a.ctypes.data for a in (self.fnrm, self.fcen, self.fcol))
 
     @classmethod
+    def combine(cls, *shapes):
+        """One Shape from several (e.g. a static clock face + moving hands)."""
+        fid, off = [], 0
+        for s in shapes:
+            fid.append(s.fid + off); off += len(s.fnrm)
+        return cls(np.concatenate([s.pts for s in shapes]), np.concatenate(fid),
+                   np.concatenate([s.fnrm for s in shapes]), np.concatenate([s.fcol for s in shapes]))
+
+    def transformed(self, R=None, t=(0.0, 0.0, 0.0)):
+        """Copy rotated by the 3x3 matrix R (about the origin) and then moved by t."""
+        R = np.eye(3, dtype=np.float32) if R is None else np.asarray(R, np.float32)
+        return Shape(self.pts @ R.T + np.asarray(t, np.float32), self.fid, self.fnrm @ R.T, self.fcol)
+
+    @classmethod
     def from_faces(cls, faces):
         """faces: [(points (k,3), normal (3,), palette index)], each with at least one point."""
         pts = np.concatenate([np.asarray(p, np.float32).reshape(-1, 3) for p, _, _ in faces])

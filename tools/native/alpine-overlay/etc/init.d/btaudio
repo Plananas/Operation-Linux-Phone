@@ -1,0 +1,23 @@
+#!/sbin/openrc-run
+# Bluetooth audio (BlueALSA): lets TREND OS play to Bluetooth speakers/headphones (A2DP source)
+# and receive from phones (A2DP sink). Replaces Alpine's "bluealsa" service, which crashes here
+# (see STACK_PAD below).
+name="Bluetooth audio (bluealsa)"
+supervisor=supervise-daemon
+# bluealsa (or a library it uses) reads just past the top of the stack, where the environment
+# strings live: with OpenRC's tiny environment that address is unmapped -> SIGSEGV within a
+# second; from an SSH shell (big environment) it works. Workaround: an 8 KB padding variable.
+STACK_PAD=$(head -c 8192 /dev/zero | tr '\0' x)
+command="/usr/bin/env"
+command_args="STACK_PAD=$STACK_PAD /usr/bin/bluealsa -p a2dp-source -p a2dp-sink"
+output_log="/var/log/btaudio.log"
+error_log="/var/log/btaudio.log"
+respawn_delay=3
+
+depend() {
+	need bluetooth
+}
+
+start_pre() {
+	mkdir -p /usr/var/lib/bluealsa       # bluealsa's (mis-packaged) storage directory
+}

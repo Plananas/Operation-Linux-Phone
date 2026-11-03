@@ -6,13 +6,57 @@ Connecting shells out to /usr/local/sbin/wifi-connect (writes the saved config a
 """
 import re, subprocess, threading, time
 
-from ..config import W, H, TOP, APP_H, ACCENT, GREY, DIM, TEXT, PALETTE, GREEN
+import math
+
+from ..config import W, H, TOP, APP_H, ACCENT, GREY, DIM, TEXT, PALETTE, GREEN, DIMGREEN, CW, CH
 from ..gfx import canvas, font, to_rgbx
 from ..keyboard import Keyboard, KB_Y
+from ..models import boxes
+from ..render import card_tiles, matrix
+from .. import ui
 from .base import App
 
 STATUS_EVERY, SCAN_EVERY = 2.0, 15.0
-ROW_Y0, ROW_H = TOP + 168, 42          # network list rows (screen coords)
+ROW_Y0, ROW_H = TOP + 196, 42          # network list rows (screen coords)
+STATUS = (14, 12, W - 14, 158)          # "wi-fi" status card (app coords)
+VCOLS, VROWS = 15, 11                   # 3D signal-bars viewport (8 x 12 px cells): 120 x 132 px
+VX, VY = W - 24 - VCOLS * CW, STATUS[1] + 10
+VIS_FPS = 15
+BAR_X, BAR_H = (-0.93, -0.31, 0.31, 0.93), (0.30, 0.55, 0.80, 1.05)   # as the "signal" icon
+
+
+def _level(dbm):
+    """Signal 0..4 bars, continuous: -90 dBm = 0, -50 dBm = 4."""
+    return 0.0 if dbm is None else max(0.0, min(4.0, (dbm + 90) / 10))
+
+
+_bar_shapes = {}
+
+
+def bars_shape(level):
+    """The signal icon in 3D with the bottom of each bar lit up to `level` (0..4): lit part
+    green, the rest of the bar dim green. Cached per 1/20 bar."""
+    q = round(level * 20) / 20
+    if q not in _bar_shapes:
+        lit, dim = [], []
+        for i, (x, hy) in enumerate(zip(BAR_X, BAR_H)):
+            f = max(0.0, min(1.0, q - i))            # how much of bar i is lit
+            full = 2 * hy
+            if f > 0.02:
+                h = full * f
+                lit.append(((x, -1.05 + h / 2, 0), (0.18, h / 2, 0.20)))
+            if f < 0.98:
+                h = full * (1 - f)
+                dim.append(((x, -1.05 + full - h / 2, 0), (0.18, h / 2, 0.20)))
+        parts = []
+        if lit:
+            parts.append(boxes(lit, colour_by_axis=(GREEN, GREEN, GREEN)))
+        if dim:
+            parts.append(boxes(dim, colour_by_axis=(DIMGREEN, DIMGREEN, DIMGREEN)))
+        from ..models import Shape
+        _bar_shapes[q] = parts[0] if len(parts) == 1 else Shape.combine(*parts)
+    return _bar_shapes[q]
+
 
 
 def _run(cmd, timeout):
@@ -38,6 +82,9 @@ class WifiApp(App):
         self.next_status = self.next_scan = 0.0
         self._busy = False
         self.mode = "list"                 # list | connect | busy | result
+        self.level = 0.0                   # displayed signal level (eases to the real one)
+        self.last_t = time.monotonic()
+        self._list_key, self._buf = None, None
         self.kb = None
         self.sel = None                    # SSID being connected to
         self.msg = ""
@@ -98,6 +145,8 @@ class WifiApp(App):
             threading.Thread(target=self._refresh, args=(do_scan,), daemon=True).start()
         if self.mode == "connect":
             return ("connect", self.sel, self.kb.key(now))
+        if self.mode == "list":
+            return (self.mode, self.version, self.msg, int(now * VIS_FPS))   # 3D bars animate
         return (self.mode, self.version, self.msg)
 
     # ---- input ----
@@ -154,20 +203,38 @@ class WifiApp(App):
             return self._render_connect()
         if self.mode in ("busy", "result"):
             return self._render_message()
-        return self._render_list()
+        k = (self.version, repr(self.status), repr(self.networks))
+        if k != self._list_key:                      # the list itself: only when it changes
+            self._list_key, self._base = k, self._render_list()
+            self._buf = self._base.copy()
+        self._draw_bars(now)
+        return self._buf
+
+    def _draw_bars(self, now):
+        """3D signal bars in the status card, swaying gently, easing to the real signal."""
+        dt, self.last_t = min(0.2, now - self.last_t), now
+        target = _level(self.status.get("dbm")) if self.status.get("connected") else 0.0
+        self.level += (target - self.level) * (1 - math.exp(-4 * dt))
+        h, w = VROWS * CH, VCOLS * CW
+        self._buf[VY:VY + h, VX:VX + w] = self._base[VY:VY + h, VX:VX + w]
+        m9 = matrix(0.28, 0.10 * math.sin(0.9 * now), 0.55 * math.sin(0.6 * now), 0.0)
+        self.renderer.view(self._buf, bars_shape(self.level), m9, VCOLS * 1.9, VCOLS, VROWS, VX, VY,
+                           card_tiles(VY, ui.PANEL, ui.SCAN, STATUS[1]))
 
     def _render_list(self):
         im, d = canvas(APP_H)
         f_big, f_mid, f_small = font(34), font(20), font(16, bold=False)
         st = self.status
-        d.rounded_rectangle([14, 14, W - 14, 118], 14, fill=(6, 13, 9), outline=(0, 80, 45), width=2)
+        ui.card(d, STATUS, "wi-fi")
         if st.get("connected"):
-            d.text((30, 26), st.get("ssid", "?"), fill=ACCENT, font=f_big)
-            self._signal(d, W - 150, 34, _bars(st.get("dbm")))
-            d.text((30, 74), f"{st.get('ip','?')}   {st.get('dbm','?')} dBm", fill=TEXT, font=f_small)
+            name = st.get("ssid", "?")
+            name = name if len(name) <= 14 else name[:13] + "…"
+            d.text((30, 32), name, fill=ACCENT, font=f_big)
+            d.text((30, 82), st.get("ip", "?"), fill=TEXT, font=f_small)
+            d.text((30, 108), f"{st.get('dbm', '?')} dBm", fill=ui.MID, font=f_small)
         else:
-            d.text((30, 40), "not connected", fill=GREY, font=f_big)
-        d.text((22, 140), "nearby networks  (tap to join)", fill=GREY, font=f_small)
+            d.text((30, 50), "not connected", fill=GREY, font=f_big)
+        d.text((22, 168), "nearby networks  (tap to join)", fill=GREY, font=f_small)
         if not self.networks:
             d.text((30, ROW_Y0 - TOP), "scanning…", fill=DIM, font=f_mid)
         for i, (ssid, dbm, secured) in enumerate(self.networks):

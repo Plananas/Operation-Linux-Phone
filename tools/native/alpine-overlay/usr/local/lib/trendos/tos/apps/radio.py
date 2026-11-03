@@ -4,7 +4,9 @@ Look: the same green-phosphor terminal as the Calculator: framed cards with a la
 the top edge, CRT scanlines, outlined keys.
   * "fm" card: big frequency readout, status line, volume blocks, band position bar.
   * "scope" card: oscilloscope trace with phosphor persistence (it fades over a few frames)
-    above an ASCII spectrum analyser drawn with the OS's shading ramp (SHADES).
+    above a 3D waterfall terrain: the live spectrum is the front ridge and scrolls back to the
+    horizon in perspective, nearer ridges hiding farther ones, in the 3D renderer's ASCII
+    characters (radio off: a flat perspective grid).
   * "tune" card: a drum dial: ticks wrap round a cylinder (they bunch up and dim towards the
     edges). Drag or fling it; it snaps to 0.1 MHz. Tap a number on it to jump there.
   * keys: << -1 MHz, < -0.1, on/off, > +0.1, >> +1 (hold < > to repeat). Volume keys work.
@@ -19,14 +21,17 @@ import json, math, os, subprocess, threading, time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from ..config import W, TOP, APP_H, ACCENT, SHADES, NS
+from ..config import W, TOP, APP_H, ACCENT, SHADES, NS, CW, CH, GREEN, DIMGREEN
+from ..render import card_tiles
 from ..gfx import font, to_rgbx, text_len, draw_text
-from .. import fm
+from .. import audio, fm
 from ..ui import BG, FRAME, FRAME_HI, PANEL, SCAN, DIM, MID, FLARE, ERR, KEY_STYLE, mix as _mix, card as _card
 from .base import App
 
 STATE_FILE = "/var/lib/trendos/radio.json"
 CAPTURE = ["arecord", "-q", "-D", f"hw:CARD={fm.CARD},DEV=0", "-f", "S16_LE", "-c", "1", "-r", "16000", "-t", "raw"]
+# with a Bluetooth speaker/headphones connected: CD-quality capture, streamed to it as well
+CAPTURE_BT = ["arecord", "-q", "-D", f"hw:CARD={fm.CARD},DEV=0", "-f", "S16_LE", "-c", "2", "-r", "44100", "-t", "raw"]
 KEY_VOLDOWN, KEY_VOLUP = 114, 115
 
 # ---- palette: the shared TREND OS look (tos/ui.py) --------------------------------------------
@@ -35,9 +40,11 @@ GRID = (0, 34, 19)
 # ---- layout (app-area coordinates; touch y is screen y, i.e. + TOP) -------------------------
 DISP = (14, 12, W - 14, 172)
 SCOPE = (14, 188, W - 14, 452)
-SX0, SY0, SX1, SY1 = 24, 204, W - 24, 334          # oscilloscope
-SPY0, CELL, SP_ROWS = 342, 16, 6                    # spectrum: 27 x 6 cells of 16 px
-SP_COLS = (SX1 - SX0) // CELL
+SX0, SY0, SX1, SY1 = 24, 204, W - 24, 294          # oscilloscope
+TY0, T_ROWS = 300, 12                               # 3D waterfall terrain: 12 rows of 12 px cells
+T_COLS = (SX1 - SX0) // CW                          # 54 columns (one spectrum band each)
+T_LINES, T_EVERY = 14, 2                            # history ridges, frames per new ridge
+T_AMP, T_HORIZON = 7.0, 0.6                         # peak height (rows, front ridge), horizon row
 DIAL = (14, 468, W - 14, 604)
 KX, KY, KW, KH, GX = 14, 620, 84, 96, 8
 KEYS = [("<<", -1.0), ("<", -0.1), ("pwr", None), (">", 0.1), (">>", 1.0)]
@@ -95,14 +102,18 @@ class RadioApp(App):
         self._lock, self._wake = threading.Lock(), threading.Event()
         self._worker = None
         self._cap = None                    # arecord process
+        self._bt_play = None                # aplay to the Bluetooth device, while one is connected
+        self.bt_out, self._bt_check = None, 0.0
         self.samples = np.zeros(4096, np.int16)
         self.anim_until = 0.0
         self.last_t = time.monotonic()
         # visualiser state
         self.phos = np.zeros((SY1 - SY0, SX1 - SX0), np.uint8)
         self.peak = 2000.0
-        self.bands = np.zeros(SP_COLS, np.float32)
+        self.bands = np.zeros(T_COLS, np.float32)            # live spectrum (front ridge)
+        self.hist = np.zeros((T_LINES, T_COLS), np.float32)  # [0] = front (newest)
         self.band_ref = -1e9
+        self.t_frames = 0
         self._buf = None                    # persistent app-area image (built on first render)
 
     # ---- lifecycle -----------------------------------------------------------------------
@@ -162,8 +173,13 @@ class RadioApp(App):
                     if t != self.tuned:
                         self.fm.tune(t); self.tuned = t
                         next_rssi = time.monotonic() + 0.15
-                    if self.vol != self.hw_vol:
-                        fm.set_volume(self.vol); self.hw_vol = self.vol
+                    want = 0 if self.bt_out else self.vol      # wired headphones muted on Bluetooth
+                    if want != self.hw_vol:
+                        fm.set_volume(want); self.hw_vol = want
+                    if time.monotonic() >= self._bt_check:       # Bluetooth audio came / went?
+                        self._bt_check = time.monotonic() + 2.0
+                        if audio.bt_sink() != self.bt_out:
+                            self._start_capture()
                     if time.monotonic() >= next_rssi:
                         self.rssi = self.fm.rssi()
                         next_rssi = time.monotonic() + 0.5
@@ -178,16 +194,28 @@ class RadioApp(App):
                 self.state, self.msg, self.rssi, self.tuned = "error", str(e)[:28], None, None
 
     def _start_capture(self):
+        """Line-in capture for the visualiser; with Bluetooth audio connected it is CD quality
+        and also streamed to the speaker/headphones (wired headphones muted: they are only
+        the antenna then)."""
         self._stop_capture()
+        mac = audio.bt_sink()
         try:
-            p = subprocess.Popen(CAPTURE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+            if mac:
+                self._bt_play = subprocess.Popen(["aplay", "-q", "-D", audio.bt_device(mac), "-f", "S16_LE",
+                                                  "-c", "2", "-r", "44100", "-t", "raw"],
+                                                 stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            p = subprocess.Popen(CAPTURE_BT if mac else CAPTURE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, bufsize=0)
         except OSError:
+            self._stop_capture()
             return
+        self.bt_out = mac
         self._cap = p
-        threading.Thread(target=self._read_capture, args=(p,), daemon=True).start()
+        threading.Thread(target=self._read_capture, args=(p, self._bt_play), daemon=True).start()
 
-    def _read_capture(self, p):
+    def _read_capture(self, p, out=None):
         fd, ring, carry = p.stdout.fileno(), np.zeros(4096, np.int16), b""
+        stereo = out is not None
         while True:
             try:
                 b = os.read(fd, 4096)
@@ -196,9 +224,17 @@ class RadioApp(App):
             if not b:
                 break
             b, carry = carry + b, b""
-            if len(b) & 1:
-                b, carry = b[:-1], b[-1:]
-            a = np.frombuffer(b, np.int16)[-len(ring):]
+            n = len(b) - len(b) % (4 if stereo else 2)
+            b, carry = b[:n], b[n:]
+            if out is not None:
+                try:
+                    out.stdin.write(b)
+                except (BrokenPipeError, OSError):
+                    out = None                           # device went away: the worker notices
+            a = np.frombuffer(b, np.int16)
+            if stereo:
+                a = a[::6]                               # left channel, 44.1 -> ~14.7 kHz for the visuals
+            a = a[-len(ring):]
             ring = np.concatenate((ring[len(a):], a))
             self.samples = ring                          # swapped whole: no lock needed
 
@@ -207,6 +243,11 @@ class RadioApp(App):
         if p is not None:
             p.kill()
             p.wait()
+        b, self._bt_play = self._bt_play, None
+        if b is not None:
+            b.kill()
+            b.wait()
+        self.bt_out = None
         self.samples = np.zeros(4096, np.int16)
 
     # ---- input --------------------------------------------------------------------------------
@@ -326,23 +367,28 @@ class RadioApp(App):
             self._floor[gy, ::4] = GRID_I
         self._scope_lut = _lut32(_phosphor)
         self._cols = np.arange(w)
-        # spectrum: atlas [screen row, shade] of character cells with the card background baked in
-        f = font(18)
-        atlas = np.zeros((SP_ROWS, NS, CELL, CELL, 4), np.uint8)
-        for r in range(SP_ROWS):
-            bar_row = SP_ROWS - 1 - r
-            col = _mix(MID, FLARE, bar_row / (SP_ROWS - 1) * 0.8)
-            y = SPY0 + r * CELL
-            bg = self._buf[y:y + CELL, SX0:SX0 + CELL]
-            for sh in range(NS):
-                t = Image.new("RGB", (CELL, CELL), BG)
-                ImageDraw.Draw(t).text((3, -3), SHADES[sh], fill=col, font=f)
-                atlas[r, sh] = np.maximum(to_rgbx(t), bg)
-        self._atlas32 = atlas.view(np.uint32).reshape(SP_ROWS, NS, CELL, CELL)
-        self._rows = np.broadcast_to(np.arange(SP_ROWS)[:, None], (SP_ROWS, SP_COLS))
-        self._bar_row = (SP_ROWS - 1 - np.arange(SP_ROWS))[:, None]
+        # 3D terrain: the 3D renderer's ASCII tiles, on the card background
+        atlas = card_tiles(TY0, PANEL, SCAN, SCOPE[1])
+        self._t_atlas32 = atlas.view(np.uint32).reshape(len(atlas), CH, CW)
+        self._t_cols = np.arange(T_COLS)
+        cx = (T_COLS - 1) / 2
+        # per ridge i (rows) and screen column (cols): which band it shows (linear interpolation
+        # between i0 and i0 + 1), whether it is inside the ridge's width, its baseline + scale
+        sc = 1 / (1 + 0.16 * np.arange(T_LINES))[:, None]           # perspective scale
+        u = cx + (self._t_cols[None, :] - cx) / sc
+        self._t_ok = (u >= 0) & (u <= T_COLS - 1)
+        u = np.clip(u, 0, T_COLS - 1.001)
+        self._t_i0 = np.floor(u).astype(np.intp)
+        self._t_w = (u - self._t_i0).astype(np.float32)
+        self._t_line = np.broadcast_to(np.arange(T_LINES)[:, None], u.shape)
+        self._t_base = (T_HORIZON + (T_ROWS - 1.15 - T_HORIZON) * sc).astype(np.float32)
+        self._t_amp = (T_AMP * sc).astype(np.float32)
+        depth = np.arange(T_LINES)[:, None]
+        self._t_colour = np.where(depth < T_LINES // 2, GREEN, DIMGREEN) * NS
+        self._t_dim = (1.15 - 0.5 * depth / T_LINES).astype(np.float32)
+        self.t_floor = None
         self._win = np.hanning(1024).astype(np.float32)
-        e = np.round(np.geomspace(3, 512, SP_COLS + 1)).astype(int)
+        e = np.round(np.geomspace(3, 512, T_COLS + 1)).astype(int)
         for k in range(1, len(e)):
             e[k] = max(e[k], e[k - 1] + 1)
         self._edges, self._widths = e[:-1], np.diff(e).astype(np.float32)
@@ -417,7 +463,7 @@ class RadioApp(App):
             self._prerender()
         buf = self._buf
         on = self.state == "on"
-        k = (self.state, self.msg, self.rssi, int(now * 8) % 4 if self.state == "starting" else 0, self.vol)
+        k = (self.state, self.msg, self.rssi, int(now * 8) % 4 if self.state == "starting" else 0, self.vol, self.bt_out)
         if self._shown.get("status") != k:
             self._region(DISP[1] + 6, DISP[1] + 42, self._draw_status, now)
             self._shown["status"] = k
@@ -438,7 +484,7 @@ class RadioApp(App):
             self._draw_keys(buf)
             self._shown["keys"] = k
         self._draw_scope(buf)
-        self._draw_spectrum(buf)
+        self._draw_terrain(buf)
         return buf
 
     def _region(self, y0, y1, draw, now):
@@ -453,7 +499,8 @@ class RadioApp(App):
         elif self.state == "error":
             status, scol = "> error: " + self.msg, ERR
         elif self.state == "on":
-            status, scol = f"> tuned    rssi {self.rssi if self.rssi is not None else '--'}", MID
+            where = "bluetooth" if self.bt_out else "tuned"
+            status, scol = f"> {where}    rssi {self.rssi if self.rssi is not None else '--'}", MID
         else:
             status, scol = "> off   (headphones = antenna)", MID
         y = DISP[1] + 14 - oy
@@ -546,23 +593,45 @@ class RadioApp(App):
         np.maximum(phos, self._floor, out=phos)
         self._buf32[SY0:SY1, SX0:SX1] = self._scope_lut[phos]
 
-    def _draw_spectrum(self, buf):
+    def _draw_terrain(self, buf):
+        """Waterfall terrain: the live spectrum is the front ridge; every T_EVERY frames it moves
+        one step back towards the horizon, shrinking in perspective and fading. Drawn front to
+        back with per-column occlusion (a ridge hides what is behind it), one ASCII character
+        per column whose density follows the level. Radio off: a flat perspective grid."""
         if self.state == "on" and self._cap is not None:
             s = self.samples[-1024:].astype(np.float32) * self._win
             mag = np.abs(np.fft.rfft(s))[1:]                                 # 15.6 Hz bins
-            bands = np.add.reduceat(mag, self._edges) [:SP_COLS] / self._widths
+            bands = np.add.reduceat(mag, self._edges)[:T_COLS] / self._widths
             db = 20 * np.log10(bands + 1.0)
-            self.band_ref = max(float(db.max()), self.band_ref - 0.4)       # slow auto-gain
-            v = np.clip(1 - (self.band_ref - db) / 36.0, 0, 1)
+            # level relative to the noise floor (radio static is loud everywhere): floor = a
+            # slowly tracked low percentile, top = slowly decaying peak
+            fl = float(np.percentile(db, 35))
+            self.t_floor = fl if self.t_floor is None else 0.9 * self.t_floor + 0.1 * fl
+            self.band_ref = max(float(db.max()), self.band_ref - 0.3)
+            v = np.clip((db - self.t_floor) / max(6.0, self.band_ref - self.t_floor), 0, 1) ** 1.3
         else:
-            v = np.zeros(SP_COLS, np.float32)
-        self.bands = np.maximum(v, self.bands * 0.82).astype(np.float32)  # fast attack, slow fall
-        self.bands[self.bands < 0.01] = 0
-        if self._shown.get("spec_zero") and not self.bands.any():
+            v = np.zeros(T_COLS, np.float32)
+        self.bands = np.maximum(v, self.bands * 0.75).astype(np.float32)  # fast attack, slow fall
+        self.t_frames += 1
+        if self.t_frames % T_EVERY == 0:
+            self.hist[1:] = self.hist[:-1]
+        self.hist[0] = self.bands
+        if self.state != "on":
+            self.hist *= 0.8
+        if self._shown.get("terrain_flat") and not self.hist.any():
             return
-        fill = np.clip(self.bands[None, :] * SP_ROWS - self._bar_row, 0, 1)    # (rows, cols)
-        sh = np.rint(fill * (NS - 1)).astype(np.intp)
-        tiles = self._atlas32[self._rows, sh]                                  # rows, cols, C, C
-        self._buf32[SPY0:SPY0 + SP_ROWS * CELL, SX0:SX0 + SP_COLS * CELL] = \
-            tiles.transpose(0, 2, 1, 3).reshape(SP_ROWS * CELL, SP_COLS * CELL)
-        self._shown["spec_zero"] = not self.bands.any()
+        h = self.hist
+        lv = h[self._t_line, self._t_i0] * (1 - self._t_w) + h[self._t_line, self._t_i0 + 1] * self._t_w
+        r = np.clip(np.floor(self._t_base - lv * self._t_amp).astype(np.intp), 0, T_ROWS - 1)
+        r[~self._t_ok] = T_ROWS
+        # occlusion: a ridge shows only where it rises above every ridge in front of it
+        front = np.minimum.accumulate(np.vstack([np.full((1, T_COLS), T_ROWS), r[:-1]]), axis=0)
+        draw = r < front
+        shade = 3 + np.minimum((lv * (NS - 4) * self._t_dim).astype(np.intp), NS - 4)
+        grid = np.zeros((T_ROWS, T_COLS), np.int32)
+        grid[r[draw], np.broadcast_to(self._t_cols, r.shape)[draw]] = (self._t_colour + shade)[draw]
+        tiles = self._t_atlas32[grid]                                       # rows, cols, CH, CW
+        self._buf32[TY0:TY0 + T_ROWS * CH, SX0:SX0 + T_COLS * CW] = \
+            tiles.transpose(0, 2, 1, 3).reshape(T_ROWS * CH, T_COLS * CW)
+        self.hist[self.hist < 0.005] = 0
+        self._shown["terrain_flat"] = not self.hist.any()

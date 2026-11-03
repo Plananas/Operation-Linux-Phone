@@ -11,7 +11,7 @@ from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETT
 from .gfx import canvas, crop_columns, text_strip, to_rgbx, blit
 from . import models
 from .render import matrix
-from .apps import CalculatorApp, WifiApp, RadioApp, ClockApp
+from .apps import CalculatorApp, WifiApp, RadioApp, ClockApp, BluetoothApp
 
 
 class Entry:
@@ -22,6 +22,8 @@ class Entry:
     def __init__(self, model, app=None, opens=None, name=None, phase=(0.0, 0.0, 0.0)):
         self.shape, self.colour = models.get(model), PALETTE[models.colour(model)]
         self.app, self.opens = app, opens
+        if app is not None:
+            app.icon_shape = self.shape          # the shell spins it in the app's title bar
         self.a, self.b, self.c = phase       # home cube: tumble angles; apps: sway wave phases
         self.t = 0.0                         # apps: sway clock
         self.label = None
@@ -53,6 +55,7 @@ def default_entries():
 def settings_entries():
     return [
         Entry("signal", WifiApp(), phase=(0.4, 0.9, 0.2)),
+        Entry("bluetooth", BluetoothApp(), phase=(0.7, 0.3, 0.6)),
     ]
 
 
@@ -159,8 +162,9 @@ class Launcher:
                 en.t += dt
 
     # ---- drawing ----
-    def _render_entries(self, band, renderer, blend):
-        """Render the visible entrie(s) + labels into a band array. Returns the touched rects."""
+    def _render_entries(self, band, renderer, blend, skip_current=False):
+        """Render the visible entrie(s) + labels into a band array. Returns the touched rects.
+        skip_current: leave out the centred object (it is flying to/from an app's badge)."""
         visible = [(self.cur, self.off)]
         if self.off > 0:
             visible.append(((self.cur - 1) % self.n, self.off - W))
@@ -176,7 +180,8 @@ class Launcher:
             else:
                 m = matrix(APP_TILT, *en.pose())
                 k = K_APP
-            rects.append(renderer.draw(band, en.shape, m, k, dx))
+            if not (skip_current and idx == self.cur):
+                rects.append(renderer.draw(band, en.shape, m, k, dx))
             if en.label is not None:
                 rects.append(blit(band, en.label, LABEL_Y, dx + en.label_x))
         return [r for r in rects if r[1] > r[0] and r[3] > r[2]]
@@ -192,9 +197,9 @@ class Launcher:
             band[DOTS_Y:DOTS_Y + 12] = self.dots[self.cur]
             self.dots_shown[page] = self.cur
 
-    def render_band(self, renderer, blend=1.0):
+    def render_band(self, renderer, blend=1.0, skip_current=False):
         """A fresh band image of the current frame (no page/dirty state) for slide snapshots."""
         band = np.zeros((BAND, W, 4), np.uint8)
-        self._render_entries(band, renderer, blend)
+        self._render_entries(band, renderer, blend, skip_current)
         band[DOTS_Y:DOTS_Y + 12] = self.dots[self.cur]
         return band
