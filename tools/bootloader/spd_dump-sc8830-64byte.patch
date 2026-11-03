@@ -1,0 +1,29 @@
+diff --git a/spd_dump.c b/spd_dump.c
+index f8ba370..f391b42 100644
+--- a/spd_dump.c
++++ b/spd_dump.c
+@@ -399,10 +399,20 @@ static int send_msg(spdio_t *io) {
+ 
+ #if USE_LIBUSB
+ 	{
+-		int err = libusb_bulk_transfer(io->dev_handle,
+-				io->endp_out, io->enc_buf, io->enc_len, &ret, io->timeout);
+-		if (err < 0)
+-			ERR_EXIT("usb_send failed : %s\n", libusb_error_name(err));
++		/* SC8830 BootROM: high-speed device but its bulk endpoints say maxpacket 64 (invalid;
++		 * Linux uses 512) and it can only take 64-byte packets -> send in 64-byte pieces. */
++		int off = 0, chunk = getenv("SPD_CHUNK") ? atoi(getenv("SPD_CHUNK")) : io->enc_len;
++		if (chunk <= 0) chunk = io->enc_len;
++		ret = 0;
++		while (off < io->enc_len) {
++			int n = io->enc_len - off, done = 0, err;
++			if (n > chunk) n = chunk;
++			err = libusb_bulk_transfer(io->dev_handle,
++					io->endp_out, io->enc_buf + off, n, &done, io->timeout);
++			if (err < 0)
++				ERR_EXIT("usb_send failed : %s\n", libusb_error_name(err));
++			off += done; ret += done;
++		}
+ 	}
+ 	// UMS9117 waits too long after a 512 byte block.
+ 	if (io->endp_out_blk == 512 && !((unsigned)io->enc_len % 512)) {
