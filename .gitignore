@@ -9,3 +9,11 @@ backup/sdcard/
 __pycache__/
 tools/ext/
 tools/spotify/go-librespot
+
+# Full phone image (contains IMEI/calibration in efs: private, and large)
+backup/phone-image-*/
+
+# BootROM read-back test output
+backup/bootrom-read-*/
+# kernel test build output (tools/kernel/build.sh); released images are boot-nativeN.img
+firmware/extracted/boot-kernel-test.img

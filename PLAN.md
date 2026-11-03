@@ -7,13 +7,14 @@ SM-G318H `vivalto3mveml3g` · Spreadtrum **SC8830** (2× Cortex-A7 ARMv7+NEON, c
 Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot img), system p24, **userdata p26**; SPL in `mmcblk0boot0`. PIT: `backup/pit.txt`.
 
 ## 2. Current state
-- Boot image: **`firmware/extracted/boot-native6.img`** (stock kernel + DT, our ramdisk). Ramdisk `init` → charger mode? `/bin/charger` : logo + `bootanim` → `switch_root` to **Alpine 3.24 at `/data/alpine`** (OpenRC). Android never starts.
+- Boot image: **`firmware/extracted/boot-native7.img`** = **our own kernel** (§7 Kernel) + stock DT + our ramdisk. Previous (stock Samsung kernel): `boot-native6.img`. RECOVERY (p21) also holds a TREND OS test kernel (stock recovery: `firmware/extracted/recovery.img`). Ramdisk `init` → charger mode? `/bin/charger` : logo + `bootanim` → `switch_root` to **Alpine 3.24 at `/data/alpine`** (OpenRC). Android never starts.
 - OpenRC default runlevel: `usbnet sshd bootscreen wifi local`. Shell = `bootscreen` service (supervise-daemon) → `/usr/local/bin/trendos.py` → package `/usr/local/lib/trendos/tos` + `librender.so`.
+- Storage: `userdata` (p26) holds only `alpine/` (TREND OS root) + `native-init.log` (Android's files deleted 2026-11-03, ~2 GB free). Android's `system` (p24) still intact but unused (Wi-Fi fw + FM patch already copied to `/data/wifi`, `/data/bt`).
 - Network: **Wi-Fi** (default route, auto-connects) + **USB RNDIS** (phone 192.168.42.129, laptop .1, NM conn `phone-usb`, metric 100 backup). SSH key-only, root.
 - Apps: home carousel = welcome cube, Calculator, Radio, Settings → [Wi-Fi]. Spotify shelved (§7).
 
 ## 3. Gotchas (read before touching)
-**Boot image**: stock boot.img has a Spreadtrum DT *after* the ramdisk (`dt_size`); abootimg drops it → no boot. Always repack with `tools/repack_keep_dt.py`. Ramdisk cpio must be root-owned → `tools/native/mkramdisk.py`. Bootloader passes `androidboot.mode=charger` when powered on by a charger (`poweroff` with USB in → charger boot). First 8 MB (SBOOT/SBOOT2) write-protected; Samsung power-on logo can't change.
+**Boot image**: `reboot recovery` boots RECOVERY (p21) and that flag is **sticky** across power-cycles until a normal reboot (`syscall(88,…,"normal")`, see `tools/kernel/test-in-recovery.sh`); `reboot download` = Download mode without buttons. Stock boot.img has a Spreadtrum DT *after* the ramdisk (`dt_size`); abootimg drops it → no boot. Always repack with `tools/repack_keep_dt.py`. Ramdisk cpio must be root-owned → `tools/native/mkramdisk.py`. Bootloader passes `androidboot.mode=charger` when powered on by a charger (`poweroff` with USB in → charger boot). First 8 MB (SBOOT/SBOOT2) write-protected; Samsung power-on logo can't change.
 **Display** `/dev/fb0` 480×800, 3 pages, byte order **RGBX**. Pan returns immediately → always `FBIO_WAITFORVSYNC`, triple-buffer, never write the visible page. **Never write 0 to backlight** (use 160). Pan/read/write = EPERM while asleep. Wake: wake lock → `mem` → `on` > `/sys/power/state` → wait `/sys/power/wait_for_fb_wake` → pan.
 **Input**: touch `/dev/input/event1` (MT protocol B, screen px; KEY_BACK 158). Keys `event0` (HOME 102, POWER 116, VOL). `input_event` = `llHHi`.
 **Audio**: card numbers change per boot → always by name: `amixer -c sprdphone`, `aplay -D hw:CARD=sprdphone,DEV=0`. Route with `/usr/local/sbin/audio-speaker`; `VBC Switch` must be `ap`.
@@ -78,13 +79,17 @@ New OpenRC service: add `etc/init.d/X` to the overlay **and** to `FILES` in `too
 - Regs: 0x00 power (1 FM, 3 +RDS) · 0x01 ctrl (0x04 stereo) · 0x05 audio (0x1c = DAC L+R; 0x02 mute) · 0x09 tune mode (1 preset, 2 seek) · 0x0a/0b freq = kHz−64000 LE · 0x0f RSSI · 0x12 flags · 0xf8 volume. Codec line-in path in `codec_on()`.
 - **DON'T use digital FM** (`hw:sprdphone,4` / EXTDIGFM) — reboots the phone. Open: RSSI reads a flat ~170–185 across the whole band (no station found yet; antenna/headphones or RSSI meaning unverified) → no auto-seek yet; RDS (0x80); chip volume 0xf8.
 
+**Kernel** (ours since 2026-11-03): Samsung source github.com/TechTex198/SM-G318H-Kernel-Source (3.10.17) in `tools/ext/kernel`, `tools/kernel/build.sh` (GCC 4.7.3, Docker) → `firmware/extracted/boot-kernel-test.img`. Config = `vivalto3mveml3g_hw00_defconfig` + `tools/kernel/trendos.config` (public defconfig is the Spreadtrum-Marlin board variant; ours has Broadcom: BCM4343 dhd, BCM BT rfkill/LPM, GPS BCM47520, zswap/vnswap; matched to stock `/proc/kallsyms`, remaining diffs = Samsung security hooks, MUIC debug UART, MAC-from-file). Patch `tools/kernel/trendos-logo.patch`: sprdfb paints the boot frame (`tools/kernel/bootframe.rgbx` ← `tools/bootlogo/sboot_logo.jpg`, via `mklogo_h.py`) into the bootloader's buffer at ~0.44 s → Samsung logo only ~1 s; always 3 fb pages (stock uses 2 in recovery mode). Test new builds with `tools/kernel/test-in-recovery.sh`, install by `dd` to p20 + normal reboot.
+
+**Bootloader (SBOOT logo) via BootROM** — paused, plan: own FDL1. BootROM (Vol-Up + USB) = `SPRD3`, runs any FDL1 at 0x50000000; spd_dump needs `tools/bootloader/spd_dump-sc8830-64byte.patch` (`SPD_CHUNK=64`: high-speed device, 64-byte bulk maxpacket). Public SC8830 FDL1 (zeallar/w_sprd_fdls, TD860 phone) hangs after exec (DDR init). Own SPL has the right DDR init but no USB. Read-only test: `tools/bootloader/bootrom-read.sh`.
+
 **Spotify** (shelved): go-librespot works for browsing/login, but every track fails `aes key code 1` (Spotify refuses librespot clients; workaround = DRM circumvention, not doing it). Code kept (`apps/spotify.py`, `etc/init.d/spotify`, `tools/spotify/`). Revive: import in `apps/__init__.py`, re-add Entry, `SPOTIFY=1 tools/deploy.sh`.
 
 ## 8. Dead ends (don't retry)
-TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · changing Samsung power-on logo (signed SBOOT) · mainline/postmarketOS (no SC8830 port) · digital FM path · spotifyd/librespot playback.
+TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · changing Samsung power-on logo from Linux/Download mode (WP + signed SBOOT; BootROM route paused, §7) · mainline/postmarketOS (no SC8830 port) · digital FM path · spotifyd/librespot playback.
 
 ## 9. Backups (never delete)
-`backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). Stock firmware in `firmware/` (gitignored; samfw.com).
+`backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). **Full phone image** `backup/phone-image-2026-11-03/` (gitignored: all partitions except userdata + Android's userdata files; restore steps in its README). Never wipe efs/prodnv/*nv/PARAM/MODEM/bootloaders on the phone. Stock firmware in `firmware/` (gitignored; samfw.com).
 
 ## 10. Next ideas
 Radio: seek + RDS once a real station is confirmed · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).

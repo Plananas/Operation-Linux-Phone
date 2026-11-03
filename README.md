@@ -13,7 +13,7 @@ time (see *Getting out of trouble*).
 
 | What you do | What happens |
 |---|---|
-| **Power on** | Samsung logo → TREND OS logo with a spinning cube → startup sound → "Welcome, Robin" |
+| **Power on** | Samsung logo (~1 s) → TREND OS logo → spinning cube → startup sound → "Welcome, Robin" |
 | **Swipe left / right** | Move between apps (each app is a spinning 3D object) |
 | **Tap an object** | Open that app (the home cube is just a welcome — it doesn't open anything) |
 | **Back key, Home button, or tap the title** | Close the app |
@@ -57,7 +57,7 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 | Problem | Fix |
 |---|---|
 | Screen frozen / weird | `ssh root@192.168.42.129 rc-service bootscreen restart` |
-| Phone won't boot TREND OS | Pull battery, hold **Vol-Down + Home + Power** (Download mode), then on the laptop: `heimdall flash --KERNEL firmware/extracted/boot-native6.img` |
+| Phone won't boot TREND OS | Pull battery, hold **Vol-Down + Home + Power** (Download mode), then on the laptop: `heimdall flash --KERNEL firmware/extracted/boot-native7.img` (our kernel) or `boot-native6.img` (Samsung's kernel) |
 | Want Android back | Same Download mode, then `heimdall flash --KERNEL firmware/extracted/boot.img` (stock) or `boot-root4.img` (rooted Android) |
 | Phone totally dead (no logo, no Download mode) | Emergency chip mode: battery out and back in, **hold Volume Up** while plugging in USB → screen stays black, laptop sees a "Spreadtrum" device. Recovering from there needs extra tools (not set up yet). |
 
@@ -74,6 +74,8 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 | `PLAN.md` | Technical notes for Claude: how everything works, quirks, procedures, how to add an app |
 | `tools/native/alpine-overlay/` | Everything installed on the phone (home screen, apps, services) |
 | `tools/native/` | Boot-image parts: startup script, boot animation, charging screen, graphics engine |
+| `tools/kernel/` | Our own Linux kernel build (Samsung's source + the early TREND OS logo) |
+| `tools/bootloader/` | Emergency-mode (BootROM) tools for a future bootloader logo swap |
 | `tools/deploy.sh` | Push updates to the phone |
 | `tools/pc-share-internet.sh` | Share the laptop's internet with the phone |
 | `tools/spotify/` | Shelved Spotify player build (Spotify blocks playback for this kind of client) |
