@@ -19,29 +19,18 @@ import json, math, os, subprocess, threading, time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from ..config import W, TOP, APP_H, ACCENT, PALETTE, RED, SHADES, NS
+from ..config import W, TOP, APP_H, ACCENT, SHADES, NS
 from ..gfx import font, to_rgbx, text_len, draw_text
 from .. import fm
+from ..ui import BG, FRAME, FRAME_HI, PANEL, SCAN, DIM, MID, FLARE, ERR, KEY_STYLE, mix as _mix, card as _card
 from .base import App
 
 STATE_FILE = "/var/lib/trendos/radio.json"
 CAPTURE = ["arecord", "-q", "-D", f"hw:CARD={fm.CARD},DEV=0", "-f", "S16_LE", "-c", "1", "-r", "16000", "-t", "raw"]
 KEY_VOLDOWN, KEY_VOLUP = 114, 115
 
-# ---- palette (same family as the Calculator) -------------------------------------------------
-BG = (0, 0, 0)
-FRAME, FRAME_HI = (0, 85, 48), (0, 150, 85)
-PANEL, SCAN = (0, 7, 4), (0, 13, 7)
-DIM, MID = (0, 60, 34), (0, 110, 62)
-FLARE = (200, 255, 225)
+# ---- palette: the shared TREND OS look (tos/ui.py) --------------------------------------------
 GRID = (0, 34, 19)
-ERR = PALETTE[RED]
-KEY_STYLE = {   # kind: (fill, edge, text, pressed fill) -- as the Calculator's keys
-    "step": ((0, 10, 6), (0, 72, 42), (190, 245, 210), (150, 230, 185)),
-    "jump": ((0, 14, 8), (0, 150, 85), ACCENT, ACCENT),
-    "off":  ((14, 3, 3), (125, 42, 42), (255, 110, 110), (255, 110, 110)),
-    "on":   (ACCENT, ACCENT, (0, 0, 0), FLARE),
-}
 
 # ---- layout (app-area coordinates; touch y is screen y, i.e. + TOP) -------------------------
 DISP = (14, 12, W - 14, 172)
@@ -68,11 +57,6 @@ SPIN = "|/-\\"
 VIS_FPS = 20                        # visualiser frame rate (30 costs ~46 % of a core, 20 ~1/3)
 
 
-def _mix(a, b, t):
-    t = min(1.0, max(0.0, t))
-    return tuple(int(x + (y - x) * t) for x, y in zip(a, b))
-
-
 def _lut32(colour_of):
     """256-entry intensity -> RGBX lookup table as uint32 (one gather colours a whole image)."""
     lut = np.zeros((256, 4), np.uint8)
@@ -84,18 +68,6 @@ def _lut32(colour_of):
 def _phosphor(v):
     """Scope tube: dark panel, up to ACCENT, white-hot at the trace core."""
     return _mix(PANEL, ACCENT, v / 0.75) if v < 0.75 else _mix(ACCENT, FLARE, (v - 0.75) / 0.25)
-
-
-def _card(d, box, label):
-    x0, y0, x1, y1 = box
-    d.rounded_rectangle([x0, y0, x1, y1], 9, fill=PANEL, outline=FRAME, width=2)
-    for y in range(y0 + 4, y1 - 2, 3):
-        d.line([(x0 + 3, y), (x1 - 3, y)], fill=SCAN)
-    f = font(16)
-    label = f" {label} "
-    lw = d.textlength(label, font=f)
-    d.rectangle([x0 + 18, y0 - 2, x0 + 18 + lw, y0 + 2], fill=BG)
-    d.text((x0 + 18, y0 - 10), label, fill=FRAME_HI, font=f)
 
 
 class RadioApp(App):

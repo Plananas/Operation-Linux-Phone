@@ -11,7 +11,7 @@ from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETT
 from .gfx import canvas, crop_columns, text_strip, to_rgbx, blit
 from . import models
 from .render import matrix
-from .apps import CalculatorApp, WifiApp, RadioApp
+from .apps import CalculatorApp, WifiApp, RadioApp, ClockApp
 
 
 class Entry:
@@ -45,6 +45,7 @@ def default_entries():
         Entry("cube"),                                                  # home: welcome
         Entry("plus", CalculatorApp(), phase=(0.6, 1.1, 0.3)),
         Entry("radio", RadioApp(), phase=(0.9, 0.4, 0.5)),
+        Entry("clock", ClockApp(), phase=(0.2, 1.3, 0.8)),
         Entry("settings", opens="settings", name="Settings", phase=(0.3, 0.7, 0.2)),
     ]
 

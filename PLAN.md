@@ -11,7 +11,8 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot img), system p2
 - OpenRC default runlevel: `usbnet sshd bootscreen wifi local`. Shell = `bootscreen` service (supervise-daemon) → `/usr/local/bin/trendos.py` → package `/usr/local/lib/trendos/tos` + `librender.so`.
 - Storage: `userdata` (p26) holds only `alpine/` (TREND OS root) + `native-init.log` (Android's files deleted 2026-11-03, ~2 GB free). Android's `system` (p24) still intact but unused (Wi-Fi fw + FM patch already copied to `/data/wifi`, `/data/bt`).
 - Network: **Wi-Fi** (default route, auto-connects) + **USB RNDIS** (phone 192.168.42.129, laptop .1, NM conn `phone-usb`, metric 100 backup). SSH key-only, root.
-- Apps: home carousel = welcome cube, Calculator, Radio, Settings → [Wi-Fi]. Spotify shelved (§7).
+- Apps: home carousel = welcome cube, Calculator, Radio, Clock, Settings → [Wi-Fi]. Spotify shelved (§7).
+- Time: timezone Europe/London (`tzdata`, `/etc/localtime`). OpenRC **`timesync`** = busybox ntpd as root (Alpine's `ntpd` service can't work: it relies on ambient capabilities, not in 3.10); `-S ntp-synced` writes `/tmp/ntp-last-sync`; RTC saved at shutdown (`conf.d/hwclock` clock_systohc).
 
 ## 3. Gotchas (read before touching)
 **Boot image**: `reboot recovery` boots RECOVERY (p21) and that flag is **sticky** across power-cycles until a normal reboot (`syscall(88,…,"normal")`, see `tools/kernel/test-in-recovery.sh`); `reboot download` = Download mode without buttons. Stock boot.img has a Spreadtrum DT *after* the ramdisk (`dt_size`); abootimg drops it → no boot. Always repack with `tools/repack_keep_dt.py`. Ramdisk cpio must be root-owned → `tools/native/mkramdisk.py`. Bootloader passes `androidboot.mode=charger` when powered on by a charger (`poweroff` with USB in → charger boot). First 8 MB (SBOOT/SBOOT2) write-protected; Samsung power-on logo can't change.
@@ -31,7 +32,8 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot img), system p2
 | `config.py` | all constants: `W=480 H=800 TOP=66 APP_H`, `PALETTE` + colour indices (`RED GREEN … CYAN ORANGE WHITE`), `ACCENT`, `SHADES`, timings |
 | `shell.py` | main loop; modes launcher/app/transition/power/halt/asleep; region cache per page keyed by `app.key()` |
 | `launcher.py` | `Entry(model, app=None, opens=None, name=None, phase=…)`; `default_entries()`, `settings_entries()` |
-| `apps/` | `base.App`, `calculator.py`, `wifi.py` (threads + keyboard example), `radio.py` (hardware worker thread, live 30 fps numpy drawing), `spotify.py` (shelved) |
+| `apps/` | `base.App`, `calculator.py`, `wifi.py` (threads + keyboard example), `radio.py` (hardware worker thread, live 30 fps numpy drawing), `clock.py` (7-segment glow digits, alarms via `background()`), `spotify.py` (shelved) |
+| `ui.py` | shared look: palette (`PANEL MID DIM GHOST FLARE ERR…`), `card()`, `key_image()`, `Keys` (key rows + hit test) — use it for new apps |
 | `fm.py` | FM radio driver (`FM().on/tune/rssi/off`, `set_volume`); CLI `/usr/local/sbin/fmctl` |
 | `models/` | 3D icons: `shape.py` (`Shape`, `boxes`, `extrude`, `arc`, `relief`), `icons.py` (`@model(name, colour)`), `registry.py` |
 | `keyboard.py` | on-screen keyboard (`Keyboard(on_done, on_cancel, text)`, `.touch/.key/.render`, `KB_Y`) |
@@ -51,13 +53,15 @@ Other: `tools/native/render.c` → `librender.so` (built on phone by deploy) · 
        name = "My App"                       # title bar + launcher label
        def on_open(self): ...                # optional: start hardware/threads (on_close stops them)
        def on_key(self, code, pressed): ...  # optional: volume keys 114/115; return True if used
+       def background(self, now): ...        # optional: ~1/s even when closed/asleep; True = shell wakes the screen + brings app to front
+       keep_awake = False                    # optional: True = no auto screen-off while open
        def touch(self, ev, x, y): ...        # ev "down"/"move"/"up", screen coords (y >= TOP)
        def key(self, now): return self.state # hashable; render() only runs when it changes
        def render(self, now):                # -> numpy RGBX array (APP_H, W, 4)
            im = Image.new("RGB", (W, APP_H)); d = ImageDraw.Draw(im)
            d.text((20, 20), "hello", font=font(28), fill=ACCENT); return to_rgbx(im)
    ```
-   Rules: keep `key()` cheap and stable when idle (that's what keeps CPU low); include time buckets (`int(now*30)`) only when animating. `render()` may run before `on_open` (launcher pre-renders apps). For animation: keep one persistent buffer, redraw only changed regions, and use whole-array numpy (uint32 views + lookup tables); per-pixel Python/PIL per frame is far too slow (each full app-area copy alone is ~5 ms). Measure on the phone before deploying. Slow work (subprocess, network) → daemon thread that updates state and bumps a version in `key()` (see `wifi.py`). Text input → `Keyboard` (see `wifi.py` connect mode). Back/Home/title-tap close the app automatically. Style: black bg, green-phosphor `ACCENT`, VT323, ASCII only.
+   Rules: keep `key()` cheap and stable when idle (that's what keeps CPU low); include time buckets (`int(now*30)`) only when animating. `render()` may run before `on_open` (launcher pre-renders apps). For animation: keep one persistent buffer, redraw only changed regions, and use whole-array numpy (uint32 views + lookup tables); per-pixel Python/PIL per frame is far too slow (each full app-area copy alone is ~5 ms). Measure on the phone before deploying. Slow work (subprocess, network) → daemon thread that updates state and bumps a version in `key()` (see `wifi.py`). Text input → `Keyboard` (see `wifi.py` connect mode). Back/Home/title-tap close the app automatically. Style: black bg, green-phosphor `ACCENT`, VT323, ASCII only — build screens from `tos/ui.py` (`card`, `Keys`). A once-a-second full PIL redraw (~45 ms) is fine; for 20–30 fps follow radio.py.
 2. **Export** in `tos/apps/__init__.py`.
 3. **Icon** — in `tos/models/icons.py` add `@model("myicon", COLOUR)` returning a Shape from `boxes([...], colour_by_axis=(…))` (blocky), `extrude(inside_fn, outlines, depth, colour)` (2D silhouette) or `relief(colour_at, depth)`. Fit within ~[-1.3, 1.3] x/y, flat front. Preview: `ssh phone 'cd /usr/local/lib/trendos && python3 -m tos.models myicon'`.
 4. **Launcher** — `Entry("myicon", MyApp(), phase=(a, b, c))` in `default_entries()` (or `settings_entries()` for a setting; a sub-menu is `Entry(..., opens="name")`).
@@ -92,4 +96,4 @@ TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · 
 `backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). **Full phone image** `backup/phone-image-2026-11-03/` (gitignored: all partitions except userdata + Android's userdata files; restore steps in its README). Never wipe efs/prodnv/*nv/PARAM/MODEM/bootloaders on the phone. Stock firmware in `firmware/` (gitignored; samfw.com).
 
 ## 10. Next ideas
-Radio: seek + RDS once a real station is confirmed · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).
+Radio: seek + RDS once a real station is confirmed · Clock: timer/stopwatch · Settings: Display/Sound/About · music player · file transfer page · Bluetooth · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).

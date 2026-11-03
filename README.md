@@ -26,6 +26,10 @@ time (see *Getting out of trouble*).
 - **Calculator** (the spinning plus sign) — green-phosphor terminal style, with history.
 - **Settings** (the sliders icon) — opens a second carousel. Inside it, **Wi-Fi** shows your
   connection and nearby networks; tap a network and type the password on the on-screen keyboard.
+- **Clock** (the clock face) — big glowing time, date, and up to 4 alarms. Tap **+ new alarm**
+  or an alarm to set the time and the days it repeats (no days = rings once). Alarms ring
+  through the speaker even with the screen off or another app open; volume key = snooze 5 min.
+  The phone sets its own time from the internet over Wi-Fi (UK time, summer time included).
 - **Radio** (the mast icon) — FM radio. **Plug in wired headphones first: they're the antenna.**
   Opening it switches the radio on (takes ~4 s), closing it switches it off. Drag or flick the
   tuning drum (or tap a number on it); `<` `>` step 0.1 MHz (hold to repeat), `<<` `>>` jump

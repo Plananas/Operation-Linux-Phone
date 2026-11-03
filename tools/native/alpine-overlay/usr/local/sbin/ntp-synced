@@ -1,0 +1,7 @@
+#!/bin/sh
+# Called by busybox ntpd (-S, timesync service) with "step", "stratum", "unsync" or "periodic".
+# Records the time of the last good sync for the Clock app. The hardware clock is written at
+# shutdown by OpenRC's hwclock service (clock_systohc=YES).
+case "$1" in
+step|stratum|periodic) date +%s > /tmp/ntp-last-sync ;;
+esac

@@ -140,3 +140,31 @@ def radio(depth=0.2):
 
     scale, lift = 1.08, 0.05                       # fill the icon box like the others
     return relief(lambda x, y: colour_at(x / scale, (y - lift) / scale), depth, extent=1.35)
+
+
+@model("clock", BLUE)
+def clock(depth=0.18):
+    """Clock: a blue ring with four white hour marks and white hands at ten past ten (the
+    classic watch-advert pose), joined at a white centre boss. The face is open, so the
+    background shows through between the hands."""
+    r_out, r_in = 1.25, 1.0
+    hands = [(math.radians(90 + 60), 0.55, 0.11), (math.radians(90 - 60), 0.85, 0.08)]  # hour, minute
+
+    def colour_at(x, y):
+        r = math.hypot(x, y)
+        if r_in <= r <= r_out:
+            return BLUE
+        if r > r_out:
+            return None
+        if r < 0.16:
+            return WHITE                                           # centre boss
+        a = math.atan2(y, x)
+        for k in range(4):                                         # marks at 12, 3, 6, 9
+            ka = k * math.pi / 2
+            if r_in - 0.24 <= r < r_in and abs(math.sin(a - ka)) * r < 0.08 and math.cos(a - ka) > 0:
+                return WHITE
+        for ang, length, half in hands:
+            if _seg_dist(x, y, 0, 0, length * math.cos(ang), length * math.sin(ang)) < half:
+                return WHITE
+        return None
+    return relief(colour_at, depth, extent=r_out)

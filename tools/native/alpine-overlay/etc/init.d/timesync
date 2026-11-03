@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+# Internet time for TREND OS: busybox ntpd, run as root. (Alpine's own "ntpd" service runs it as
+# user ntp with ambient capabilities, which this 3.10 kernel doesn't have, so it can't set the
+# clock.) Retries quietly until Wi-Fi is up. The RTC is written at shutdown (conf.d/hwclock).
+name="time sync (busybox ntpd)"
+command="/usr/sbin/ntpd"
+command_args="-n -N -p pool.ntp.org -S /usr/local/sbin/ntp-synced"
+command_background=true
+pidfile="/run/timesync.pid"
+
+depend() {
+	after wifi usbnet
+}

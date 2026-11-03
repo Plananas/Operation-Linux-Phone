@@ -1,0 +1,3 @@
+# keep the RTC in step with the (NTP-synced) system time
+clock="UTC"
+clock_systohc="YES"

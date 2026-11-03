@@ -65,6 +65,8 @@ class Shell:
         self.held_events = []                 # touches made while an app is sliding open
         self.warm = [en.app for en in self.entries if en.app is not None]   # apps to pre-render
         self.page, self.frames, self.fps, self.fps_t0 = 1, 0, 0.0, now
+        self.bg_apps = [en.app for en in self.entries if en.app is not None]
+        self.next_bg = now
         self.shown = {}                                   # region -> per-page "what is drawn"
         self.repaint_all()
         self.shown["base"] = ["launcher"] * NPAGES     # boot frame is already a launcher screen
@@ -84,7 +86,9 @@ class Shell:
     # ---- sleep ----------------------------------------------------------------------------------
     def sleep_until_wake(self):
         """Screen off: no drawing, block on input until Power or Home."""
-        select.select(self.input.fds, [], [], 5.0)
+        select.select(self.input.fds, [], [], 2.0)
+        if self.run_background(time.monotonic()):
+            return
         for ev, code, val, _ in self.input.poll():
             if ev == "key" and val == 1 and code in (KEY_POWER, KEY_HOME):
                 self.fb.screen_on((self.page - 1) % NPAGES)
@@ -93,6 +97,48 @@ class Shell:
                 self.power_down_t, self.power_handled = None, True     # ignore this press's release
                 self.repaint_all()
                 return
+
+    # ---- background apps (alarms) ------------------------------------------------------------
+    def run_background(self, now):
+        """Let apps check timers about once a second; True if one was brought to the front."""
+        if now < self.next_bg or self.mode == "halt":
+            return False
+        self.next_bg = now + 1.0
+        for app in self.bg_apps:
+            try:
+                wants = app.background(now)
+            except Exception:
+                wants = False
+            if wants:
+                self.summon(app)
+                return True
+        return False
+
+    def summon(self, app):
+        """Bring app to the front now: wake the screen, close whatever else is open (no slide;
+        Back later slides to the home carousel)."""
+        now = time.monotonic()
+        if self.asleep:
+            self.fb.screen_on((self.page - 1) % NPAGES)
+            self.asleep = False
+            self.last = now
+        self.last_input = now
+        self.power_down_t, self.power_handled = None, True
+        self.menu = None
+        if self.app is not None and self.app is not app:
+            self.app.on_close()
+        if self.settings is not None:
+            self.settings.reset_position()
+        self.home.cur, self.home.off = 0, 0.0
+        self.home.reset_position()
+        self.launcher = self.home; self.carousel_is_home = True
+        self.launcher_snap = self.carousel_frame(self.home, "Welcome, " + GREET_NAME, now)
+        if self.app is not app:
+            self.app = app
+            app.on_open()
+        self.trans, self.trans_live, self.held_events = None, None, []
+        self.mode = "app"
+        self.repaint_all()
 
     def go_to_sleep(self):
         self.asleep = True
@@ -107,6 +153,9 @@ class Shell:
         if self.power_down_t is not None and not self.power_handled and now - self.power_down_t >= LONG_PRESS:
             self.power_handled = True
             self.open_power_menu()
+        self.run_background(now)
+        if self.mode == "app" and self.app.keep_awake:
+            self.last_input = now
         if self.mode in ("launcher", "app") and now - self.last_input > SLEEP_AFTER:
             self.asleep = True
         if self.asleep:

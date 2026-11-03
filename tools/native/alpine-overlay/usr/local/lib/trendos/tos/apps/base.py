@@ -3,6 +3,13 @@
 
 class App:
     name = "App"
+    keep_awake = False          # True: the screen doesn't auto-sleep while this app is open
+
+    def background(self, now):
+        """Called by the shell about once a second, even when the app is closed or the screen
+        is off (then every few seconds). Return True to be brought to the front (the screen is
+        woken and any other app closed): e.g. an alarm going off."""
+        return False
 
     def on_open(self):
         """The app is being opened (start hardware, threads, ...). render() may already have
