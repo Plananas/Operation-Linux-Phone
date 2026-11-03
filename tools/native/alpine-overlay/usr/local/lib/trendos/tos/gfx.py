@@ -74,3 +74,37 @@ def blit(dst, img, y0, x0):
         dst[y0:y0 + h, a:b] = img[:, a - x0:b - x0]
         return (y0, y0 + h, a, b)
     return (0, 0, 0, 0)
+
+
+_glyphs = {}           # (char, size) -> glyph; VT323 is monospaced, so text = pasted glyphs
+
+
+def glyph(ch, size):
+    """(mask cropped to the ink, x offset, y offset, advance) of one character."""
+    g = _glyphs.get((ch, size))
+    if g is None:
+        f = font(size)
+        adv, pad = f.getlength(ch), size
+        m = Image.new("L", (int(adv) + size, size * 3), 0)
+        ImageDraw.Draw(m).text((0, pad), ch, fill=255, font=f)
+        bb = m.getbbox()
+        g = (m.crop(bb), bb[0], bb[1] - pad, adv) if bb else (None, 0, 0, adv)
+        _glyphs[(ch, size)] = g
+    return g
+
+
+def text_len(s, size):
+    """Width in px of s in the UI font at size."""
+    return sum(glyph(ch, size)[3] for ch in s)
+
+
+def draw_text(im, x, y, s, size, colour):
+    """Paste s onto a PIL image (RGB, RGBX or L) via the glyph cache: much faster than
+    ImageDraw.text for big or often-redrawn text (FreeType costs ~5 ms per big string)."""
+    if im.mode == "RGBX":
+        colour = colour + (0,)
+    for ch in s:
+        m, dx, dy, adv = glyph(ch, size)
+        if m is not None:
+            im.paste(colour, (int(x + dx), int(y + dy)), m)
+        x += adv

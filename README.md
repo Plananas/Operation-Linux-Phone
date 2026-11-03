@@ -26,8 +26,11 @@ time (see *Getting out of trouble*).
 - **Calculator** (the spinning plus sign) — green-phosphor terminal style, with history.
 - **Settings** (the sliders icon) — opens a second carousel. Inside it, **Wi-Fi** shows your
   connection and nearby networks; tap a network and type the password on the on-screen keyboard.
-- **Radio** (the mast icon) — only the icon so far. The FM radio chip already works from the
-  command line (plug in wired headphones — they're the antenna); the app is next.
+- **Radio** (the mast icon) — FM radio. **Plug in wired headphones first: they're the antenna.**
+  Opening it switches the radio on (takes ~4 s), closing it switches it off. Drag or flick the
+  tuning drum (or tap a number on it); `<` `>` step 0.1 MHz (hold to repeat), `<<` `>>` jump
+  1 MHz, the middle key switches on/off, the **volume keys** set the volume. The scope and the
+  ASCII bars show the actual audio. It remembers your last station.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop
@@ -73,7 +76,6 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 | `tools/native/` | Boot-image parts: startup script, boot animation, charging screen, graphics engine |
 | `tools/deploy.sh` | Push updates to the phone |
 | `tools/pc-share-internet.sh` | Share the laptop's internet with the phone |
-| `tools/fm/fmctl.py` | Turns the FM radio on / tunes it / off (runs on the phone) |
 | `tools/spotify/` | Shelved Spotify player build (Spotify blocks playback for this kind of client) |
 | `tools/bootlogo/`, `tools/ext/`, `bootrom_hello.py` | Old experiments: boot-logo attempts, emergency-flash tools |
 | `firmware/extracted/` | Boot images (stock Android and all TREND OS versions) |
@@ -81,6 +83,6 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 
 ## Ideas for later
 
-Radio app · more apps (system monitor, notes, a controller for smart-home things) · server
+Radio station search + station names (RDS) · more apps (system monitor, notes, a controller for smart-home things) · server
 services (website, DNS ad-blocker, MQTT) · notifications to your phone.
 Calls/SMS aren't possible (no SIM, and the modem needs Android's vendor software).

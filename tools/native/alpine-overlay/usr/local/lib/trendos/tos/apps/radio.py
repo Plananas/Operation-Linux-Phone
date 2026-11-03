@@ -1,0 +1,596 @@
+"""FM radio: tuning drum dial, live oscilloscope + ASCII spectrum of the radio's audio.
+
+Look: the same green-phosphor terminal as the Calculator: framed cards with a label cut into
+the top edge, CRT scanlines, outlined keys.
+  * "fm" card: big frequency readout, status line, volume blocks, band position bar.
+  * "scope" card: oscilloscope trace with phosphor persistence (it fades over a few frames)
+    above an ASCII spectrum analyser drawn with the OS's shading ramp (SHADES).
+  * "tune" card: a drum dial: ticks wrap round a cylinder (they bunch up and dim towards the
+    edges). Drag or fling it; it snaps to 0.1 MHz. Tap a number on it to jump there.
+  * keys: << -1 MHz, < -0.1, on/off, > +0.1, >> +1 (hold < > to repeat). Volume keys work.
+
+Hardware: tos/fm.py (Broadcom FM core over the BT UART), driven by one worker thread so the UI
+never waits on it (power-up takes ~4 s). The visualiser reads the same audio from the codec's
+line-in with `arecord` (16 kHz mono). Opening the app turns the radio on, closing turns it off.
+Wired headphones are the antenna. Last frequency + volume are kept in STATE_FILE.
+"""
+import json, math, os, subprocess, threading, time
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+from ..config import W, TOP, APP_H, ACCENT, PALETTE, RED, SHADES, NS
+from ..gfx import font, to_rgbx, text_len, draw_text
+from .. import fm
+from .base import App
+
+STATE_FILE = "/var/lib/trendos/radio.json"
+CAPTURE = ["arecord", "-q", "-D", f"hw:CARD={fm.CARD},DEV=0", "-f", "S16_LE", "-c", "1", "-r", "16000", "-t", "raw"]
+KEY_VOLDOWN, KEY_VOLUP = 114, 115
+
+# ---- palette (same family as the Calculator) -------------------------------------------------
+BG = (0, 0, 0)
+FRAME, FRAME_HI = (0, 85, 48), (0, 150, 85)
+PANEL, SCAN = (0, 7, 4), (0, 13, 7)
+DIM, MID = (0, 60, 34), (0, 110, 62)
+FLARE = (200, 255, 225)
+GRID = (0, 34, 19)
+ERR = PALETTE[RED]
+KEY_STYLE = {   # kind: (fill, edge, text, pressed fill) -- as the Calculator's keys
+    "step": ((0, 10, 6), (0, 72, 42), (190, 245, 210), (150, 230, 185)),
+    "jump": ((0, 14, 8), (0, 150, 85), ACCENT, ACCENT),
+    "off":  ((14, 3, 3), (125, 42, 42), (255, 110, 110), (255, 110, 110)),
+    "on":   (ACCENT, ACCENT, (0, 0, 0), FLARE),
+}
+
+# ---- layout (app-area coordinates; touch y is screen y, i.e. + TOP) -------------------------
+DISP = (14, 12, W - 14, 172)
+SCOPE = (14, 188, W - 14, 452)
+SX0, SY0, SX1, SY1 = 24, 204, W - 24, 334          # oscilloscope
+SPY0, CELL, SP_ROWS = 342, 16, 6                    # spectrum: 27 x 6 cells of 16 px
+SP_COLS = (SX1 - SX0) // CELL
+DIAL = (14, 468, W - 14, 604)
+KX, KY, KW, KH, GX = 14, 620, 84, 96, 8
+KEYS = [("<<", -1.0), ("<", -0.1), ("pwr", None), (">", 0.1), (">>", 1.0)]
+
+# ---- dial ------------------------------------------------------------------------------------
+CX, R = W // 2, 220                 # drum axis on screen, drum radius (px)
+DX0, DX1 = 22, W - 22                # dial window columns (inside the card border)
+DEG_PER_MHZ = 14.0                  # drum rotation per MHz
+PX_PER_MHZ = R * math.radians(DEG_PER_MHZ)      # at the centre line: ~52 px
+TICK_BASE = 584                     # app y of the tick bottoms
+TICK_I = {"major": 255, "half": 185, "minor": 120}    # tick intensities on the tape
+REPEAT_DELAY, REPEAT_EVERY = 0.45, 0.09
+
+# ---- visualiser --------------------------------------------------------------------------------
+GRID_I = 30                         # graticule dots (phosphor intensity)
+SPIN = "|/-\\"
+VIS_FPS = 20                        # visualiser frame rate (30 costs ~46 % of a core, 20 ~1/3)
+
+
+def _mix(a, b, t):
+    t = min(1.0, max(0.0, t))
+    return tuple(int(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def _lut32(colour_of):
+    """256-entry intensity -> RGBX lookup table as uint32 (one gather colours a whole image)."""
+    lut = np.zeros((256, 4), np.uint8)
+    for i in range(256):
+        lut[i, :3] = colour_of(i / 255)
+    return lut.view(np.uint32).ravel()
+
+
+def _phosphor(v):
+    """Scope tube: dark panel, up to ACCENT, white-hot at the trace core."""
+    return _mix(PANEL, ACCENT, v / 0.75) if v < 0.75 else _mix(ACCENT, FLARE, (v - 0.75) / 0.25)
+
+
+def _card(d, box, label):
+    x0, y0, x1, y1 = box
+    d.rounded_rectangle([x0, y0, x1, y1], 9, fill=PANEL, outline=FRAME, width=2)
+    for y in range(y0 + 4, y1 - 2, 3):
+        d.line([(x0 + 3, y), (x1 - 3, y)], fill=SCAN)
+    f = font(16)
+    label = f" {label} "
+    lw = d.textlength(label, font=f)
+    d.rectangle([x0 + 18, y0 - 2, x0 + 18 + lw, y0 + 2], fill=BG)
+    d.text((x0 + 18, y0 - 10), label, fill=FRAME_HI, font=f)
+
+
+class RadioApp(App):
+    name = "Radio"
+
+    def __init__(self):
+        self.freq, self.vol = 100.0, 10
+        try:
+            with open(STATE_FILE) as f:
+                st = json.load(f)
+            self.freq, self.vol = fm.clamp(float(st["freq"])), int(st["vol"])
+        except Exception:
+            pass
+        self.disp_f = self.freq             # dial position (float MHz, animates)
+        self.snap = None                    # MHz the dial is easing to
+        self.fling = 0.0                    # MHz/s while coasting after a flick
+        self.drag, self.moved = None, False # (x0, f0) while dragging the dial; dragged > 6 px?
+        self.trail = []                     # recent (t, x) of the drag, for flick speed
+        self.pressed, self.repeat_t = None, 0.0
+        # hardware side (written by the worker thread)
+        self.state, self.msg = "off", ""    # off | starting | on | error
+        self.rssi, self.tuned, self.hw_vol = None, None, None
+        self.want_on, self.closing = False, False
+        self.fm = fm.FM()
+        self._lock, self._wake = threading.Lock(), threading.Event()
+        self._worker = None
+        self._cap = None                    # arecord process
+        self.samples = np.zeros(4096, np.int16)
+        self.anim_until = 0.0
+        self.last_t = time.monotonic()
+        # visualiser state
+        self.phos = np.zeros((SY1 - SY0, SX1 - SX0), np.uint8)
+        self.peak = 2000.0
+        self.bands = np.zeros(SP_COLS, np.float32)
+        self.band_ref = -1e9
+        self._buf = None                    # persistent app-area image (built on first render)
+
+    # ---- lifecycle -----------------------------------------------------------------------
+    def on_open(self):
+        with self._lock:
+            self.want_on, self.closing = True, False
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._run, daemon=True)
+                self._worker.start()
+        self._wake.set()
+
+    def on_close(self):
+        with self._lock:
+            self.want_on, self.closing = False, True
+        self.drag, self.pressed = None, None
+        self._wake.set()
+        self._save()
+
+    def _save(self):
+        try:
+            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+            with open(STATE_FILE, "w") as f:
+                json.dump({"freq": round(self.target(), 1), "vol": self.vol}, f)
+        except OSError:
+            pass
+
+    def target(self):
+        """The 0.1 MHz channel the dial points at (what the chip is tuned to)."""
+        return fm.clamp(self.snap if self.snap is not None else self.disp_f)
+
+    # ---- worker thread: all hardware access ---------------------------------------------------
+    def _run(self):
+        next_rssi = 0.0
+        while True:
+            self._wake.wait(0.25)
+            self._wake.clear()
+            with self._lock:
+                if self.closing and not self.want_on and not self.fm.is_on:
+                    self._worker = None
+                    return
+                want = self.want_on
+            try:
+                if want and not self.fm.is_on:
+                    self.state, self.msg = "starting", ""
+                    t = self.target()
+                    self.fm.on(t, self.vol)
+                    self.tuned, self.hw_vol = t, self.vol
+                    self._start_capture()
+                    self.state, next_rssi = "on", 0.0
+                elif not want and self.fm.is_on:
+                    self._stop_capture()
+                    self.fm.off()
+                    self.state, self.rssi, self.tuned = "off", None, None
+                    self.anim_until = time.monotonic() + 0.8      # let the trace fade out
+                if self.fm.is_on:
+                    t = self.target()
+                    if t != self.tuned:
+                        self.fm.tune(t); self.tuned = t
+                        next_rssi = time.monotonic() + 0.15
+                    if self.vol != self.hw_vol:
+                        fm.set_volume(self.vol); self.hw_vol = self.vol
+                    if time.monotonic() >= next_rssi:
+                        self.rssi = self.fm.rssi()
+                        next_rssi = time.monotonic() + 0.5
+            except Exception as e:                      # UART timeout, missing patch file, ...
+                self._stop_capture()
+                try:
+                    self.fm.off()
+                except Exception:
+                    pass
+                with self._lock:
+                    self.want_on = False
+                self.state, self.msg, self.rssi, self.tuned = "error", str(e)[:28], None, None
+
+    def _start_capture(self):
+        self._stop_capture()
+        try:
+            p = subprocess.Popen(CAPTURE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+        except OSError:
+            return
+        self._cap = p
+        threading.Thread(target=self._read_capture, args=(p,), daemon=True).start()
+
+    def _read_capture(self, p):
+        fd, ring, carry = p.stdout.fileno(), np.zeros(4096, np.int16), b""
+        while True:
+            try:
+                b = os.read(fd, 4096)
+            except OSError:
+                break
+            if not b:
+                break
+            b, carry = carry + b, b""
+            if len(b) & 1:
+                b, carry = b[:-1], b[-1:]
+            a = np.frombuffer(b, np.int16)[-len(ring):]
+            ring = np.concatenate((ring[len(a):], a))
+            self.samples = ring                          # swapped whole: no lock needed
+
+    def _stop_capture(self):
+        p, self._cap = self._cap, None
+        if p is not None:
+            p.kill()
+            p.wait()
+        self.samples = np.zeros(4096, np.int16)
+
+    # ---- input --------------------------------------------------------------------------------
+    def on_key(self, code, pressed):
+        if code in (KEY_VOLDOWN, KEY_VOLUP):
+            if pressed:
+                self.vol = max(0, min(fm.HP_VOL_MAX, self.vol + (1 if code == KEY_VOLUP else -1)))
+                self._wake.set()
+            return True
+        return False
+
+    def _key_at(self, x, y):
+        if KY <= y <= KY + KH:
+            i = int((x - KX) // (KW + GX))
+            if 0 <= i < len(KEYS) and x - KX - i * (KW + GX) <= KW:
+                return i
+        return None
+
+    def touch(self, ev, x, y):
+        now = time.monotonic()
+        y -= TOP
+        if ev == "down":
+            if DIAL[1] <= y <= DIAL[3]:
+                self.drag, self.trail = (x, self.disp_f), [(now, x)]
+                self.snap, self.fling, self.moved = None, 0.0, False
+            else:
+                self.pressed = self._key_at(x, y)
+                if self.pressed is not None:
+                    self.repeat_t = now + REPEAT_DELAY
+                    if KEYS[self.pressed][1] is not None:
+                        self._step(KEYS[self.pressed][1])
+        elif ev == "move":
+            if self.drag is not None:
+                x0, f0 = self.drag
+                if abs(x - x0) > 6:
+                    self.moved = True
+                self.disp_f = min(fm.BAND[1], max(fm.BAND[0], f0 - (x - x0) / PX_PER_MHZ))
+                self.trail = (self.trail + [(now, x)])[-6:]
+                self._wake.set()
+            elif self.pressed is not None and self._key_at(x, y) != self.pressed:
+                self.pressed = None
+        elif ev == "up":
+            if self.drag is not None:
+                if not self.moved:                       # a tap on the dial: jump there
+                    s = max(-0.99, min(0.99, (x - CX) / R))
+                    self.snap = fm.clamp(self.disp_f + math.degrees(math.asin(s)) / DEG_PER_MHZ)
+                else:
+                    t0, x0 = self.trail[0]
+                    v = -(x - x0) / PX_PER_MHZ / max(now - t0, 1e-3)
+                    if now - t0 < 0.15 and abs(v) > 3:
+                        self.fling = max(-40.0, min(40.0, v))
+                    else:
+                        self.snap = fm.clamp(self.disp_f)
+                self.drag = None
+                self._wake.set()
+            elif self.pressed is not None:
+                if KEYS[self.pressed][1] is None and self._key_at(x, y) == self.pressed:
+                    with self._lock:
+                        self.want_on = self.state not in ("on", "starting")
+                    self._wake.set()
+                self.pressed = None
+            self.anim_until = now + 0.3
+
+    def _step(self, mhz):
+        self.fling = 0.0
+        self.snap = fm.clamp(self.target() + mhz)
+        self._wake.set()
+
+    # ---- motion --------------------------------------------------------------------------------
+    def _update(self, now):
+        dt, self.last_t = min(0.1, now - self.last_t), now
+        if self.pressed is not None and KEYS[self.pressed][1] is not None and abs(KEYS[self.pressed][1]) < 1 \
+                and now >= self.repeat_t:
+            self._step(KEYS[self.pressed][1]); self.repeat_t = now + REPEAT_EVERY
+        if self.fling:
+            self.disp_f += self.fling * dt
+            self.fling *= math.exp(-3.5 * dt)
+            if self.disp_f <= fm.BAND[0] or self.disp_f >= fm.BAND[1] or abs(self.fling) < 0.8:
+                self.disp_f = min(fm.BAND[1], max(fm.BAND[0], self.disp_f))
+                self.fling, self.snap = 0.0, fm.clamp(self.disp_f)
+            self._wake.set()
+        elif self.snap is not None and self.drag is None:
+            d = self.snap - self.disp_f
+            if abs(d) < 0.003:
+                self.disp_f, self.snap = self.snap, None
+            else:
+                self.disp_f += d * (1 - math.exp(-14 * dt))
+
+    @property
+    def moving(self):
+        return self.drag is not None or self.fling != 0.0 or self.snap is not None
+
+    def key(self, now):
+        self._update(now)
+        if self.moving or self.pressed is not None or now < self.anim_until:
+            return ("live", int(now * 30))                  # dial in motion: full frame rate
+        if self.state in ("on", "starting"):
+            return ("live", int(now * VIS_FPS))
+        return ("idle", self.state, self.msg, round(self.disp_f, 3), self.vol)
+
+    # ---- drawing ---------------------------------------------------------------------------------
+    # Everything static is pre-rendered once; each frame is a few whole-array numpy operations
+    # (per-pixel Python or PIL work is far too slow on the Cortex-A7).
+    def _prerender(self):
+        im = Image.new("RGB", (W, APP_H), BG); d = ImageDraw.Draw(im)
+        _card(d, DISP, "fm"); _card(d, SCOPE, "scope"); _card(d, DIAL, "tune")
+        self._base_im = im
+        self._buf = to_rgbx(im).copy()
+        self._buf32 = self._buf.view(np.uint32).reshape(APP_H, W)
+        self._shown = {}
+        # scope: plain tube (no scanlines) with a dotted graticule as a phosphor floor
+        h, w = self.phos.shape
+        self._floor = np.zeros((h, w), np.uint8)
+        for gx in range(0, w + 1, w // 8):
+            self._floor[::4, min(gx, w - 1)] = GRID_I
+        for gy in (0, h // 2, h - 1):
+            self._floor[gy, ::4] = GRID_I
+        self._scope_lut = _lut32(_phosphor)
+        self._cols = np.arange(w)
+        # spectrum: atlas [screen row, shade] of character cells with the card background baked in
+        f = font(18)
+        atlas = np.zeros((SP_ROWS, NS, CELL, CELL, 4), np.uint8)
+        for r in range(SP_ROWS):
+            bar_row = SP_ROWS - 1 - r
+            col = _mix(MID, FLARE, bar_row / (SP_ROWS - 1) * 0.8)
+            y = SPY0 + r * CELL
+            bg = self._buf[y:y + CELL, SX0:SX0 + CELL]
+            for sh in range(NS):
+                t = Image.new("RGB", (CELL, CELL), BG)
+                ImageDraw.Draw(t).text((3, -3), SHADES[sh], fill=col, font=f)
+                atlas[r, sh] = np.maximum(to_rgbx(t), bg)
+        self._atlas32 = atlas.view(np.uint32).reshape(SP_ROWS, NS, CELL, CELL)
+        self._rows = np.broadcast_to(np.arange(SP_ROWS)[:, None], (SP_ROWS, SP_COLS))
+        self._bar_row = (SP_ROWS - 1 - np.arange(SP_ROWS))[:, None]
+        self._win = np.hanning(1024).astype(np.float32)
+        e = np.round(np.geomspace(3, 512, SP_COLS + 1)).astype(int)
+        for k in range(1, len(e)):
+            e[k] = max(e[k], e[k - 1] + 1)
+        self._edges, self._widths = e[:-1], np.diff(e).astype(np.float32)
+        self._prerender_dial()
+        self._key_tiles = {}
+
+    def _prerender_dial(self):
+        """A flat tape of the whole band at the drum's centre-line scale, projected onto the
+        drum each frame. How much tape lies behind a screen column depends only on the column
+        (it grows towards the edges), so the tape is pre-max-filtered at each width ("mips")
+        and every column reads its own width: the bunched-up edge ticks blend instead of
+        flickering. Brightness falloff and the card's scanlines are baked into a lookup table
+        indexed by (scanline row?, column shade, tape intensity): a frame is two gathers."""
+        top = TICK_BASE - 36 - 40                                # highest ink: major labels
+        self._dy0, self._dy1 = top, TICK_BASE + 1
+        pad = 90 / DEG_PER_MHZ + 0.5
+        self._tape_f0 = fm.BAND[0] - pad
+        tw = int(math.ceil((fm.BAND[1] - fm.BAND[0] + 2 * pad) * PX_PER_MHZ)) + 2
+        tape = Image.new("L", (tw, self._dy1 - self._dy0), 0)
+        d = ImageDraw.Draw(tape)
+        base = TICK_BASE - self._dy0
+        for k in range(int(fm.BAND[0] * 10), int(fm.BAND[1] * 10) + 1):
+            x = round((k / 10 - self._tape_f0) * PX_PER_MHZ)
+            kind = "major" if k % 10 == 0 else "half" if k % 5 == 0 else "minor"
+            ln, wd = {"major": (36, 3), "half": (24, 2), "minor": (13, 1)}[kind]
+            d.rectangle([x - wd // 2, base - ln, x - wd // 2 + wd - 1, base], fill=TICK_I[kind])
+            if kind == "major":
+                lab = str(k // 10)
+                draw_text(tape, x - text_len(lab, 24) / 2, base - ln - 34, lab, 24, 255)
+        tape = np.asarray(tape)
+        # per screen column: tape offset (MHz) at its left edge, tape width behind it, shade
+        xb = np.arange(DX0, DX1 + 1) - 0.5
+        off = np.degrees(np.arcsin(np.clip((xb - CX) / R, -1, 1))) / DEG_PER_MHZ
+        self._dial_off = off[:-1]
+        width = np.maximum(1, np.ceil(np.diff(off) * PX_PER_MHZ)).astype(np.intp)
+        mips = [tape]
+        for k in range(2, int(width.max()) + 1):                # mips[k-1][:, x] = max(tape[:, x:x+k])
+            m = mips[-1].copy()
+            m[:, :-(k - 1)] = np.maximum(m[:, :-(k - 1)], tape[:, k - 1:])
+            mips.append(m)
+        self._mips = np.stack(mips)
+        self._mip_of_col = (width - 1)[None, :]
+        self._tape_rows = np.arange(tape.shape[0])[:, None]
+        self._tape_w = tw
+        # lookup table: [scanline?][shade 0..15][intensity] -> RGBX (max of background, ink)
+        xc = np.arange(DX0, DX1) - CX
+        shade = np.cos(np.arcsin(np.clip(xc / R, -1, 1))) ** 1.6
+        sq = np.minimum(15, np.round(shade * 15)).astype(np.uint16)
+        bgrow = self._buf[self._dy0:self._dy1, DX0 + 40, :3]
+        scan = np.array([tuple(c) == SCAN for c in bgrow], np.uint16)
+        lut = np.zeros((2, 16, 256, 4), np.uint8)
+        for r, bgc in enumerate((PANEL, SCAN)):
+            for q in range(16):
+                for i in range(256):
+                    ink = _mix(BG, ACCENT, i / 255 * q / 15)
+                    lut[r, q, i, :3] = tuple(max(a, b) for a, b in zip(ink, bgc))
+        self._dial_lut = lut.view(np.uint32).reshape(-1)
+        self._dial_key = (scan[:, None] << 12) | (sq[None, :] << 8)     # per pixel: lut row
+        # needle with a phosphor glow: a narrow strip composited with max()
+        nh = DIAL[3] - 8 - (DIAL[1] + 6)
+        nd = Image.new("RGB", (9, nh), BG); dd = ImageDraw.Draw(nd)
+        for dx, c in ((1, DIM), (7, DIM), (2, FRAME_HI), (6, FRAME_HI)):
+            dd.line([(dx, 12), (dx, nh - 1)], fill=c)
+        for dx in (3, 4, 5):
+            dd.line([(dx, 9), (dx, nh - 1)], fill=FLARE)
+        dd.polygon([(0, 0), (8, 0), (4, 9)], fill=FLARE)
+        self._needle = to_rgbx(nd)
+        self._needle_y = DIAL[1] + 6
+
+    def render(self, now):
+        if self._buf is None:
+            self._prerender()
+        buf = self._buf
+        on = self.state == "on"
+        k = (self.state, self.msg, self.rssi, int(now * 8) % 4 if self.state == "starting" else 0, self.vol)
+        if self._shown.get("status") != k:
+            self._region(DISP[1] + 6, DISP[1] + 42, self._draw_status, now)
+            self._shown["status"] = k
+        k = (f"{self.target():.1f}", on)
+        if self._shown.get("freq") != k:
+            self._region(DISP[1] + 42, DISP[3] - 32, self._draw_freq, now)
+            self._shown["freq"] = k
+        k = (round(self.disp_f, 2), on)
+        if self._shown.get("bar") != k:
+            self._region(DISP[3] - 32, DISP[3] - 4, self._draw_bar, now)
+            self._shown["bar"] = k
+        k = round(self.disp_f, 4)
+        if self._shown.get("dial") != k:
+            self._draw_dial(buf)
+            self._shown["dial"] = k
+        k = (self.pressed, self.state in ("on", "starting"))
+        if self._shown.get("keys") != k:
+            self._draw_keys(buf)
+            self._shown["keys"] = k
+        self._draw_scope(buf)
+        self._draw_spectrum(buf)
+        return buf
+
+    def _region(self, y0, y1, draw, now):
+        """Redraw rows y0..y1 of the app area from the base image with a PIL draw function."""
+        im = self._base_im.crop((0, y0, W, y1))
+        draw(im, ImageDraw.Draw(im), y0, now)
+        self._buf[y0:y1] = to_rgbx(im)
+
+    def _draw_status(self, im, d, oy, now):
+        if self.state == "starting":
+            status, scol = "> powering up " + SPIN[int(now * 8) % 4], ACCENT
+        elif self.state == "error":
+            status, scol = "> error: " + self.msg, ERR
+        elif self.state == "on":
+            status, scol = f"> tuned    rssi {self.rssi if self.rssi is not None else '--'}", MID
+        else:
+            status, scol = "> off   (headphones = antenna)", MID
+        y = DISP[1] + 14 - oy
+        draw_text(im, 30, y, status, 17, scol)
+        vx = DISP[2] - 16 - fm.HP_VOL_MAX * 8
+        draw_text(im, vx - 34, y, "vol", 17, MID)
+        for i in range(fm.HP_VOL_MAX):
+            x = vx + i * 8
+            d.rectangle([x, y + 4, x + 5, y + 16], fill=ACCENT if i < self.vol else DIM)
+
+    def _draw_freq(self, im, d, oy, now):
+        txt = f"{self.target():.1f}"
+        col = ACCENT if self.state == "on" else MID
+        right = 360
+        draw_text(im, right - text_len(txt, 84), DISP[1] + 44 - oy, txt, 84, col)
+        draw_text(im, right + 12, DISP[1] + 92 - oy, "MHz", 26, col)
+
+    def _draw_bar(self, im, d, oy, now):
+        y, x0, x1 = DISP[3] - 20 - oy, 40, W - 40
+        span = fm.BAND[1] - fm.BAND[0]
+        d.line([(x0, y), (x1, y)], fill=FRAME)
+        for mhz in range(88, 109, 2):
+            x = x0 + (mhz - fm.BAND[0]) / span * (x1 - x0)
+            d.line([(x, y - 3), (x, y + 3)], fill=FRAME)
+        x = x0 + (self.disp_f - fm.BAND[0]) / span * (x1 - x0)
+        d.rectangle([x - 2, y - 7, x + 2, y + 7], fill=FLARE if self.state == "on" else MID)
+
+    def _draw_dial(self, buf):
+        u = (self.disp_f - self._tape_f0 + self._dial_off) * PX_PER_MHZ
+        idx = np.clip(u.astype(np.intp), 0, self._tape_w - 1)[None, :]
+        g = self._mips[self._mip_of_col, self._tape_rows, idx]            # (rows, cols) uint8
+        self._buf32[self._dy0:self._dy1, DX0:DX1] = self._dial_lut[self._dial_key | g]
+        y0, n0 = self._needle_y, CX - 4
+        strip = buf[y0:y0 + self._needle.shape[0], n0:n0 + 9]
+        np.maximum(strip, self._needle, out=strip)
+
+    def _key_tile(self, i, lab, kind, pressed):
+        k = (i, lab, kind, pressed)
+        t = self._key_tiles.get(k)
+        if t is None:
+            im = Image.new("RGB", (KW + 1, KH + 1), BG); d = ImageDraw.Draw(im)
+            fill, edge, text, lit = KEY_STYLE[kind]
+            if pressed:
+                fill, edge, text = lit, lit, (0, 0, 0)
+            d.rounded_rectangle([0, 0, KW, KH], 7, fill=fill, outline=edge, width=2)
+            if not pressed and kind != "on":
+                d.line([(8, KH - 5), (KW - 8, KH - 5)], fill=_mix(fill, edge, 0.35), width=1)
+            draw_text(im, (KW - text_len(lab, 30)) / 2, (KH - 34) / 2, lab, 30, text)
+            t = self._key_tiles[k] = to_rgbx(im)
+        return t
+
+    def _draw_keys(self, buf):
+        on = self.state in ("on", "starting")
+        for i, (lab, step) in enumerate(KEYS):
+            if step is None:
+                kind = lab = "on" if on else "off"
+            else:
+                kind = "jump" if abs(step) >= 1 else "step"
+            x0 = KX + i * (KW + GX)
+            buf[KY:KY + KH + 1, x0:x0 + KW + 1] = self._key_tile(i, lab, kind, i == self.pressed)
+
+    def _draw_scope(self, buf):
+        h, w = self.phos.shape
+        phos = self.phos
+        phos -= phos >> 1                                     # phosphor decay (x0.5 per frame)
+        mid = h / 2
+        if self.state == "on" and self._cap is not None:
+            s = self.samples
+            n = len(s) - w
+            # trigger on a rising zero crossing so the trace stands still for steady tones
+            zc = np.flatnonzero((s[n // 2:n - 1] < 0) & (s[n // 2 + 1:n] >= 0))
+            i = n // 2 + (int(zc[-1]) if len(zc) else n // 2 - 1)
+            seg = s[i:i + w].astype(np.float32)
+            self.peak = max(float(np.abs(seg).max()), self.peak * 0.96, 300.0)
+            y = mid - seg * ((mid - 6) / self.peak)
+            level = 255
+        else:
+            y = np.full(w, mid, np.float32)
+            level = 115 if self.state in ("off", "error") else 180
+        y = np.clip(y, 2, h - 3).astype(np.intp)
+        nxt = np.append(y[1:], y[-1])
+        lo, hi = np.minimum(y, nxt), np.maximum(y, nxt)
+        # halo just above/below each column's span, then the span itself (the trace core)
+        for r in (lo - 1, hi + 1):
+            phos[r, self._cols] = np.maximum(phos[r, self._cols], level // 2)
+        ln = hi - lo + 1
+        starts = np.repeat(np.cumsum(ln) - ln, ln)
+        rows = np.repeat(lo, ln) + (np.arange(starts.size) - starts)
+        phos[rows, np.repeat(self._cols, ln)] = level
+        np.maximum(phos, self._floor, out=phos)
+        self._buf32[SY0:SY1, SX0:SX1] = self._scope_lut[phos]
+
+    def _draw_spectrum(self, buf):
+        if self.state == "on" and self._cap is not None:
+            s = self.samples[-1024:].astype(np.float32) * self._win
+            mag = np.abs(np.fft.rfft(s))[1:]                                 # 15.6 Hz bins
+            bands = np.add.reduceat(mag, self._edges) [:SP_COLS] / self._widths
+            db = 20 * np.log10(bands + 1.0)
+            self.band_ref = max(float(db.max()), self.band_ref - 0.4)       # slow auto-gain
+            v = np.clip(1 - (self.band_ref - db) / 36.0, 0, 1)
+        else:
+            v = np.zeros(SP_COLS, np.float32)
+        self.bands = np.maximum(v, self.bands * 0.82).astype(np.float32)  # fast attack, slow fall
+        self.bands[self.bands < 0.01] = 0
+        if self._shown.get("spec_zero") and not self.bands.any():
+            return
+        fill = np.clip(self.bands[None, :] * SP_ROWS - self._bar_row, 0, 1)    # (rows, cols)
+        sh = np.rint(fill * (NS - 1)).astype(np.intp)
+        tiles = self._atlas32[self._rows, sh]                                  # rows, cols, C, C
+        self._buf32[SPY0:SPY0 + SP_ROWS * CELL, SX0:SX0 + SP_COLS * CELL] = \
+            tiles.transpose(0, 2, 1, 3).reshape(SP_ROWS * CELL, SP_COLS * CELL)
+        self._shown["spec_zero"] = not self.bands.any()

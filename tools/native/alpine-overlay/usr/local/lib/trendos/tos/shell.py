@@ -235,6 +235,7 @@ class Shell:
         now = time.monotonic()
         self.launcher_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()   # screen we came from
         self.app = app
+        app.on_open()
         self.start_transition(self.launcher_snap, self.app_frame(app, now), True, "app")
 
     def open_settings(self):
@@ -267,6 +268,8 @@ class Shell:
         front = self.fb.pages[(self.page - 1) % NPAGES].copy()
         if self.settings is not None:
             self.settings.reset_position()
+        if self.app is not None:
+            self.app.on_close()
         self.app = None
         self.home.cur, self.home.off = 0, 0.0
         self.home.reset_position(); self.home.invalidate()
@@ -281,6 +284,7 @@ class Shell:
         title = "Welcome, " + GREET_NAME if self.carousel_is_home else "\u2039 Settings"
         self.start_transition(back, visible, False, "launcher", live_carousel=self.launcher,
                               live_side="back", live_title=title)
+        self.app.on_close()
         self.app = None
 
     def draw_launcher(self, buf, now, blend):
@@ -338,6 +342,8 @@ class Shell:
             self.go_home()
         elif (kind == "key" and y == 1 and x == KEY_BACK) or (kind == "up" and y < TOP):
             self.close_app()
+        elif kind == "key":
+            self.app.on_key(x, y == 1)
         elif kind in ("down", "move", "up"):
             self.app.touch(kind, x, y)
 

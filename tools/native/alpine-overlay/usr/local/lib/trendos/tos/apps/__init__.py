@@ -9,5 +9,6 @@ deploy with SPOTIFY=1.
 from .base import App
 from .calculator import CalculatorApp
 from .wifi import WifiApp
+from .radio import RadioApp
 
-__all__ = ["App", "CalculatorApp", "WifiApp"]
+__all__ = ["App", "CalculatorApp", "WifiApp", "RadioApp"]

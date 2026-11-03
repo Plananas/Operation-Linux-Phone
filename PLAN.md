@@ -10,7 +10,7 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot img), system p2
 - Boot image: **`firmware/extracted/boot-native6.img`** (stock kernel + DT, our ramdisk). Ramdisk `init` → charger mode? `/bin/charger` : logo + `bootanim` → `switch_root` to **Alpine 3.24 at `/data/alpine`** (OpenRC). Android never starts.
 - OpenRC default runlevel: `usbnet sshd bootscreen wifi local`. Shell = `bootscreen` service (supervise-daemon) → `/usr/local/bin/trendos.py` → package `/usr/local/lib/trendos/tos` + `librender.so`.
 - Network: **Wi-Fi** (default route, auto-connects) + **USB RNDIS** (phone 192.168.42.129, laptop .1, NM conn `phone-usb`, metric 100 backup). SSH key-only, root.
-- Apps: home carousel = welcome cube, Calculator, Radio (icon only, app not written yet), Settings → [Wi-Fi]. Spotify shelved (§7).
+- Apps: home carousel = welcome cube, Calculator, Radio, Settings → [Wi-Fi]. Spotify shelved (§7).
 
 ## 3. Gotchas (read before touching)
 **Boot image**: stock boot.img has a Spreadtrum DT *after* the ramdisk (`dt_size`); abootimg drops it → no boot. Always repack with `tools/repack_keep_dt.py`. Ramdisk cpio must be root-owned → `tools/native/mkramdisk.py`. Bootloader passes `androidboot.mode=charger` when powered on by a charger (`poweroff` with USB in → charger boot). First 8 MB (SBOOT/SBOOT2) write-protected; Samsung power-on logo can't change.
@@ -30,10 +30,11 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot img), system p2
 | `config.py` | all constants: `W=480 H=800 TOP=66 APP_H`, `PALETTE` + colour indices (`RED GREEN … CYAN ORANGE WHITE`), `ACCENT`, `SHADES`, timings |
 | `shell.py` | main loop; modes launcher/app/transition/power/halt/asleep; region cache per page keyed by `app.key()` |
 | `launcher.py` | `Entry(model, app=None, opens=None, name=None, phase=…)`; `default_entries()`, `settings_entries()` |
-| `apps/` | `base.App`, `calculator.py`, `wifi.py` (threads + keyboard example), `spotify.py` (shelved) |
+| `apps/` | `base.App`, `calculator.py`, `wifi.py` (threads + keyboard example), `radio.py` (hardware worker thread, live 30 fps numpy drawing), `spotify.py` (shelved) |
+| `fm.py` | FM radio driver (`FM().on/tune/rssi/off`, `set_volume`); CLI `/usr/local/sbin/fmctl` |
 | `models/` | 3D icons: `shape.py` (`Shape`, `boxes`, `extrude`, `arc`, `relief`), `icons.py` (`@model(name, colour)`), `registry.py` |
 | `keyboard.py` | on-screen keyboard (`Keyboard(on_done, on_cancel, text)`, `.touch/.key/.render`, `KB_Y`) |
-| `gfx.py` | `font`, `text_strip`, `canvas`, `to_rgbx`, `blit` |
+| `gfx.py` | `font`, `text_strip`, `canvas`, `to_rgbx`, `blit`; glyph cache `draw_text(im,x,y,s,size,col)` / `text_len` (use for big or often-redrawn text) |
 | `fb.py` `render.py` `transition.py` `power.py` `stats.py` `title.py` `inputdev.py` `boot.py` | framebuffer · C renderer wrapper · Slide anim · power menu · stats panel · typewriter title · evdev · boot handover/sound |
 
 Other: `tools/native/render.c` → `librender.so` (built on phone by deploy) · `/etc/init.d/{bootscreen,usbnet,wifi}` · `/usr/local/sbin/*` helpers · ramdisk sources in `tools/native/` (`ramdisk/init`, `bootanim.c`, `fbpan.c`, `charger.c`, `*.armv7-static`).
@@ -47,13 +48,15 @@ Other: `tools/native/render.c` → `librender.so` (built on phone by deploy) · 
    from .base import App
    class MyApp(App):
        name = "My App"                       # title bar + launcher label
+       def on_open(self): ...                # optional: start hardware/threads (on_close stops them)
+       def on_key(self, code, pressed): ...  # optional: volume keys 114/115; return True if used
        def touch(self, ev, x, y): ...        # ev "down"/"move"/"up", screen coords (y >= TOP)
        def key(self, now): return self.state # hashable; render() only runs when it changes
        def render(self, now):                # -> numpy RGBX array (APP_H, W, 4)
            im = Image.new("RGB", (W, APP_H)); d = ImageDraw.Draw(im)
            d.text((20, 20), "hello", font=font(28), fill=ACCENT); return to_rgbx(im)
    ```
-   Rules: keep `key()` cheap and stable when idle (that's what keeps CPU low); include time buckets in it only when animating. Slow work (subprocess, network) → daemon thread that updates state and bumps a version in `key()` (see `wifi.py`). Text input → `Keyboard` (see `wifi.py` connect mode). Back/Home/title-tap close the app automatically. Style: black bg, green-phosphor `ACCENT`, VT323, ASCII only.
+   Rules: keep `key()` cheap and stable when idle (that's what keeps CPU low); include time buckets (`int(now*30)`) only when animating. `render()` may run before `on_open` (launcher pre-renders apps). For animation: keep one persistent buffer, redraw only changed regions, and use whole-array numpy (uint32 views + lookup tables); per-pixel Python/PIL per frame is far too slow (each full app-area copy alone is ~5 ms). Measure on the phone before deploying. Slow work (subprocess, network) → daemon thread that updates state and bumps a version in `key()` (see `wifi.py`). Text input → `Keyboard` (see `wifi.py` connect mode). Back/Home/title-tap close the app automatically. Style: black bg, green-phosphor `ACCENT`, VT323, ASCII only.
 2. **Export** in `tos/apps/__init__.py`.
 3. **Icon** — in `tos/models/icons.py` add `@model("myicon", COLOUR)` returning a Shape from `boxes([...], colour_by_axis=(…))` (blocky), `extrude(inside_fn, outlines, depth, colour)` (2D silhouette) or `relief(colour_at, depth)`. Fit within ~[-1.3, 1.3] x/y, flat front. Preview: `ssh phone 'cd /usr/local/lib/trendos && python3 -m tos.models myicon'`.
 4. **Launcher** — `Entry("myicon", MyApp(), phase=(a, b, c))` in `default_entries()` (or `settings_entries()` for a setting; a sub-menu is `Entry(..., opens="name")`).
@@ -70,10 +73,10 @@ New OpenRC service: add `etc/init.d/X` to the overlay **and** to `FILES` in `too
 - **UI tests**: inject `input_event`s into event1 (SLOT 0, TRACKING_ID n, X, Y, SYN … TRACKING_ID -1) / event0 (keys). Screenshot = read `/dev/fb0` at `pan_y*480*4` (`/sys/class/graphics/fb0/pan`), as RGBX. Wake first (inject Home).
 
 ## 7. Subsystems
-**FM radio** (works, analog; app not written): FM core inside BCM43430A1 BT combo, driven by vendor HCI `0xFC15 [reg, 0=w|1=r, data…]` over `/dev/ttyS0` 115200 RTS/CTS. Script `tools/fm/fmctl.py on [MHz] | tune MHz | off` (phone: `/root/bt/fmctl.py` + `BCM43430A1.hcd`). Headphones = antenna.
+**FM radio** (works, analog): FM core inside BCM43430A1 BT combo, driven by vendor HCI `0xFC15 [reg, 0=w|1=r, data…]` over `/dev/ttyS0` 115200 RTS/CTS. Driver `tos/fm.py`, CLI `fmctl on [MHz] | tune MHz | off`; patch `/data/bt/BCM43430A1.hcd` (auto-copied from /system). Headphones = antenna. Radio app: opening powers on (~4 s), closing powers off; dial/keys tune; vol keys = codec HP volume 0–15; visualiser = `arecord` of the codec line-in (`hw:CARD=sprdphone,DEV=0`, 16 kHz mono works while the analog path plays); state in `/var/lib/trendos/radio.json`. CPU ~35 % of a core live (20 fps), ~60 % while dragging.
 - UART EIO until `rfkill0` toggled 0→1. Bring-up: reset → `0xFC2E` → send .hcd → reset → **`0xFC27` (12 zeros) sleep off** (else `close()` hangs, port wedged till reboot). Always `tcflush` before close.
 - Regs: 0x00 power (1 FM, 3 +RDS) · 0x01 ctrl (0x04 stereo) · 0x05 audio (0x1c = DAC L+R; 0x02 mute) · 0x09 tune mode (1 preset, 2 seek) · 0x0a/0b freq = kHz−64000 LE · 0x0f RSSI · 0x12 flags · 0xf8 volume. Codec line-in path in `codec_on()`.
-- **DON'T use digital FM** (`hw:sprdphone,4` / EXTDIGFM) — reboots the phone. Open: station check, RDS (0x80), seek, volume semantics.
+- **DON'T use digital FM** (`hw:sprdphone,4` / EXTDIGFM) — reboots the phone. Open: RSSI reads a flat ~170–185 across the whole band (no station found yet; antenna/headphones or RSSI meaning unverified) → no auto-seek yet; RDS (0x80); chip volume 0xf8.
 
 **Spotify** (shelved): go-librespot works for browsing/login, but every track fails `aes key code 1` (Spotify refuses librespot clients; workaround = DRM circumvention, not doing it). Code kept (`apps/spotify.py`, `etc/init.d/spotify`, `tools/spotify/`). Revive: import in `apps/__init__.py`, re-add Entry, `SPOTIFY=1 tools/deploy.sh`.
 
@@ -84,4 +87,4 @@ TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · 
 `backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). Stock firmware in `firmware/` (gitignored; samfw.com).
 
 ## 10. Next ideas
-Radio app (via `fmctl.py`) · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).
+Radio: seek + RDS once a real station is confirmed · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).

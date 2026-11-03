@@ -22,7 +22,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from ..config import W, TOP, APP_H, ACCENT, PALETTE, RED, SHADES
-from ..gfx import font, to_rgbx
+from ..gfx import font, to_rgbx, text_len, draw_text
 from .base import App
 
 _OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv}
@@ -89,37 +89,6 @@ SCROLL_T = 0.20                 # history scroll
 SHAKE_T = 0.35                  # error shake
 DECODE_STEP, DECODE_CHAR = 0.03, 0.16    # "=" decode: stagger per char, ramp time per char
 CLEAR_STEP, CLEAR_CHAR = 0.018, 0.16     # "C" dissolve: stagger per char (right to left), ramp
-
-
-_glyphs = {}
-
-
-def _glyph(ch, size):
-    """(mask cropped to the ink, x offset, y offset, advance) of one character."""
-    g = _glyphs.get((ch, size))
-    if g is None:
-        f = font(size)
-        adv, pad = f.getlength(ch), size
-        m = Image.new("L", (int(adv) + size, size * 3), 0)
-        ImageDraw.Draw(m).text((0, pad), ch, fill=255, font=f)
-        bb = m.getbbox()
-        g = (m.crop(bb), bb[0], bb[1] - pad, adv) if bb else (None, 0, 0, adv)
-        _glyphs[(ch, size)] = g
-    return g
-
-
-def text_len(s, size):
-    return sum(_glyph(ch, size)[3] for ch in s)
-
-
-def draw_text(im, x, y, s, size, colour):
-    if im.mode == "RGBX":
-        colour = colour + (0,)
-    for ch in s:
-        m, dx, dy, adv = _glyph(ch, size)
-        if m is not None:
-            im.paste(colour, (int(x + dx), int(y + dy)), m)
-        x += adv
 
 
 def _kind(k):
