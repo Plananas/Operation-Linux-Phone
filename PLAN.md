@@ -48,7 +48,7 @@ Partitions (by PARTNAME): SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot i
 | `tos/render.py` | tile atlas, `matrix()`, `Renderer` (C via ctypes, numpy fallback; `scale`/`blend` 2D helpers) |
 | `tos/models/` | 3D model library: `shape.py` (`Shape`, `boxes()`, `extrude()` for 2D silhouettes, `arc()`), `icons.py` (cube, plus, spotify, settings, signal, each `@model(name, colour)`), `get(name)`; preview on the phone with `python3 -m tos.models NAME` |
 | `tos/shell.py` | `Shell` main loop; modes launcher/app/transition/power/halt + asleep |
-| `tos/launcher.py` | carousel (`Entry`: app **or** `opens=` sub-menu; `is_home`); home = [welcome cube, Calculator, Spotify (no app yet), Settings]; `render_band` for slide snapshots |
+| `tos/launcher.py` | carousel (`Entry`: app **or** `opens=` sub-menu; `is_home`); home = [welcome cube, Calculator, Settings]; `render_band` for slide snapshots |
 | `tos/transition.py` | `Slide` app open/close animation |
 | `tos/power.py` | animated `PowerMenu` |
 | `tos/keyboard.py` | reusable on-screen keyboard (abc/123/#+= layers, shift, del/space/esc/done); manages its own text buffer; host app draws the field |
@@ -109,6 +109,7 @@ Wi-Fi (bcmdhd, firmware in `/system/etc/wifi`, wpa_supplicant) · more apps · s
 - Verified: reboot → auto-connects, internet OK.
 
 ## 2026-11-02 Spotify app (browsing works, playback blocked by Spotify)
+- **Shelved 2026-11-03:** removed from the launcher, `SpotifyApp` not imported, `spotify` service disabled at boot, go-librespot binary removed from the phone (deploy only copies it with `SPOTIFY=1`). Code, service, saved login and icon model kept. Revive: import in `tos/apps/__init__.py`, re-add the launcher Entry, deploy with `SPOTIFY=1`. Re-tested 2026-11-03 with the phone clock correct: still `aes key code 1`; ncspot uses the same librespot protocol, so it would fail the same way.
 - Engine: **go-librespot v0.10.5**, cross-compiled for Alpine/musl/ARMv7 by `tools/spotify/build-go-librespot.sh` (x86 Alpine container + clang targeting an armv7 sysroot of Alpine packages; needs `-no-pie` + lld). Binary `tools/spotify/go-librespot` is gitignored; `deploy.sh` copies it when changed. Runtime libs: `alsa-lib flac-libs mpg123-libs libvorbis libogg`.
 - Service: OpenRC **`spotify`** (supervise-daemon, respawns; an expired pairing code makes it exit → fresh code). Config + saved login: `/var/lib/go-librespot/` (`config.yml` from the overlay, `state.json` holds credentials). API on `127.0.0.1:3678`.
 - Login: `device_auth` — the app shows a code for spotify.com/pair (phone has no browser). Works; credentials persist.
