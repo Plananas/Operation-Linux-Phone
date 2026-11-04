@@ -24,7 +24,7 @@ from ..config import W, TOP, APP_H, ACCENT, CW, CH
 from ..gfx import font, to_rgbx, text_len, draw_text
 from ..models import Shape
 from ..models.icons import CLOCK_HANDS, _hand, clock_face, hand_angles
-from ..render import TILES, card_tiles, matrix
+from ..render import TILES, card_tiles, draw_view, matrix
 from ..ui import BG, PANEL, SCAN, DIM, MID, GHOST, FLARE, ERR, Keys, card, mix
 from .base import App
 
@@ -466,7 +466,7 @@ class ClockApp(App):
             x, y, cols, rows = FACE_X, FACE_Y, FACE_COLS, FACE_ROWS
             self._buf[y:y + rows * CH, x:x + cols * CW] = self._img[y:y + rows * CH, x:x + cols * CW]
             m9 = matrix(0.22, 0.12 * math.sin(0.8 * now), 0.45 * math.sin(0.5 * now), 0.0)
-            self.renderer.view(self._buf, clock_shape(t), m9, cols * 1.55, cols, rows, x, y,
+            draw_view(self._buf, clock_shape(t), m9, cols * 1.55, cols, rows, x, y,
                                card_tiles(y, PANEL, SCAN, ALARMS[1]))
         elif self.mode == "ring":
             x, y, cols, rows = RING_X, RING_Y, RING_COLS, RING_ROWS
@@ -474,7 +474,7 @@ class ClockApp(App):
             self._buf[y - BOUNCE:y + h, x:x + cols * CW] = self._img[y - BOUNCE:y + h, x:x + cols * CW]
             dy = -int(BOUNCE * abs(math.sin(7 * now)))
             m9 = matrix(0.18, 0.0, 0.35 * math.sin(2.5 * now), 0.30 * math.sin(34 * now))
-            self.renderer.view(self._buf, clock_shape(t), m9, cols * 1.2, cols, rows, x, y + dy, TILES)
+            draw_view(self._buf, clock_shape(t), m9, cols * 1.2, cols, rows, x, y + dy, TILES)
 
     def _sync_text(self):
         try:

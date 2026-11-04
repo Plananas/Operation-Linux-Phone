@@ -4,6 +4,7 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from . import native
 from .config import W, FONT_UI, FONT_UI_SCALE, FONT_ART
 
 
@@ -39,7 +40,8 @@ def art_font(size):
 
 def to_rgbx(im):
     """PIL image -> H x W x 4 uint8 array in the framebuffer's byte order (R, G, B, X)."""
-    return np.frombuffer(im.convert("RGBX").tobytes(), np.uint8).reshape(im.height, im.width, 4)
+    rgb = im if im.mode == "RGB" else im.convert("RGB")
+    return native.rgb_to_rgbx(rgb.tobytes(), im.height, im.width)
 
 
 def canvas(h, w=W):

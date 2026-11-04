@@ -13,13 +13,12 @@ sys.path.insert(0, "/usr/local/lib/trendos")
 def main(argv):
     if len(argv) == 3 and argv[1] in ("--boot-frame", "--boot-anim"):
         from tos import boot, models
-        from tos.render import Renderer
-        renderer, cube = Renderer(), models.get("cube")
+        cube = models.get("cube")
         if argv[1] == "--boot-frame":
             with open(argv[2], "wb") as f:
-                f.write(boot.boot_frame(renderer, cube).tobytes())
+                f.write(boot.boot_frame(cube).tobytes())
         else:
-            boot.export_bootanim(argv[2], renderer, cube)
+            boot.export_bootanim(argv[2], cube)
         return
     from tos.shell import Shell
     Shell().run()

@@ -12,7 +12,7 @@ from ..config import W, H, TOP, APP_H, ACCENT, GREY, DIM, TEXT, PALETTE, GREEN, 
 from ..gfx import canvas, font, to_rgbx
 from ..keyboard import Keyboard, KB_Y
 from ..models import boxes
-from ..render import card_tiles, matrix
+from ..render import card_tiles, draw_view, matrix
 from .. import ui
 from .base import App
 
@@ -218,7 +218,7 @@ class WifiApp(App):
         h, w = VROWS * CH, VCOLS * CW
         self._buf[VY:VY + h, VX:VX + w] = self._base[VY:VY + h, VX:VX + w]
         m9 = matrix(0.28, 0.10 * math.sin(0.9 * now), 0.55 * math.sin(0.6 * now), 0.0)
-        self.renderer.view(self._buf, bars_shape(self.level), m9, VCOLS * 1.9, VCOLS, VROWS, VX, VY,
+        draw_view(self._buf, bars_shape(self.level), m9, VCOLS * 1.9, VCOLS, VROWS, VX, VY,
                            card_tiles(VY, ui.PANEL, ui.SCAN, STATUS[1]))
 
     def _render_list(self):

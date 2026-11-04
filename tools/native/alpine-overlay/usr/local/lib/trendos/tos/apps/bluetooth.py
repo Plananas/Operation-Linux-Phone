@@ -19,7 +19,7 @@ from ..config import W, TOP, APP_H, ACCENT, CW, CH
 from ..gfx import to_rgbx, text_len, draw_text
 from ..bluetooth import BtCtl, SCAN_TIME
 from ..models import get as get_model
-from ..render import card_tiles, matrix
+from ..render import card_tiles, draw_view, matrix
 from ..ui import BG, PANEL, SCAN, DIM, MID, ERR, Keys, card
 from .base import App
 
@@ -138,7 +138,7 @@ class BluetoothApp(App):
         self._buf[VY:VY + h, VX:VX + w] = self._img[VY:VY + h, VX:VX + w]
         yaw = self.spin if self.bt.discovering else 0.6 * math.sin(self.spin)
         m9 = matrix(0.22, 0.0, yaw, 0.0)
-        self.renderer.view(self._buf, get_model("bluetooth"), m9, VCOLS * 1.55, VCOLS, VROWS, VX, VY,
+        draw_view(self._buf, get_model("bluetooth"), m9, VCOLS * 1.55, VCOLS, VROWS, VX, VY,
                            card_tiles(VY, PANEL, SCAN, STATUS[1]))
 
     def _row_status(self, d):

@@ -16,6 +16,8 @@ import math
 
 import numpy as np
 
+from .. import native
+
 DENSITY = 17                    # sample points per unit length
 SEG = 0.09                      # side-wall facet length: short enough that curves shade smoothly
 
@@ -32,8 +34,7 @@ class Shape:
         self.fstart = np.ascontiguousarray(np.searchsorted(self.fid, np.arange(len(self.fnrm) + 1)), np.int32)
         self.face_idx = [np.arange(self.fstart[i], self.fstart[i + 1]) for i in range(len(self.fnrm))]
         self.fcen = np.ascontiguousarray([self.pts[ix].mean(0) for ix in self.face_idx], np.float32)
-        self.cptr = tuple(a.ctypes.data for a in (self.pts, self.fid, self.fstart)) + (len(self.fnrm),) + \
-                    tuple(a.ctypes.data for a in (self.fnrm, self.fcen, self.fcol))
+        self.cmesh = native.mesh(self.pts, self.fstart, self.fnrm, self.fcen, self.fcol)
 
     @classmethod
     def combine(cls, *shapes):

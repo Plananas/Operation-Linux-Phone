@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 from ..config import W, TOP, APP_H, ACCENT, SHADES, NS, CW, CH, GREEN, DIMGREEN
 from ..render import card_tiles
 from ..gfx import font, to_rgbx, text_len, draw_text
-from .. import audio, fm
+from .. import audio, fm, native
 from ..ui import BG, FRAME, FRAME_HI, PANEL, SCAN, DIM, MID, FLARE, ERR, KEY_STYLE, mix as _mix, card as _card
 from .base import App
 
@@ -366,26 +366,30 @@ class RadioApp(App):
         for gy in (0, h // 2, h - 1):
             self._floor[gy, ::4] = GRID_I
         self._scope_lut = _lut32(_phosphor)
-        self._cols = np.arange(w)
         # 3D terrain: the 3D renderer's ASCII tiles, on the card background
         atlas = card_tiles(TY0, PANEL, SCAN, SCOPE[1])
-        self._t_atlas32 = atlas.view(np.uint32).reshape(len(atlas), CH, CW)
-        self._t_cols = np.arange(T_COLS)
+        self._t_atlas = native.atlas(atlas, CW, CH)
+        self._t_tiles = atlas                                       # keeps the pointer above alive
+        cols = np.arange(T_COLS)
         cx = (T_COLS - 1) / 2
         # per ridge i (rows) and screen column (cols): which band it shows (linear interpolation
         # between i0 and i0 + 1), whether it is inside the ridge's width, its baseline + scale
         sc = 1 / (1 + 0.16 * np.arange(T_LINES))[:, None]           # perspective scale
-        u = cx + (self._t_cols[None, :] - cx) / sc
-        self._t_ok = (u >= 0) & (u <= T_COLS - 1)
+        u = cx + (cols[None, :] - cx) / sc
+        t_ok = (u >= 0) & (u <= T_COLS - 1)
         u = np.clip(u, 0, T_COLS - 1.001)
-        self._t_i0 = np.floor(u).astype(np.intp)
-        self._t_w = (u - self._t_i0).astype(np.float32)
-        self._t_line = np.broadcast_to(np.arange(T_LINES)[:, None], u.shape)
-        self._t_base = (T_HORIZON + (T_ROWS - 1.15 - T_HORIZON) * sc).astype(np.float32)
-        self._t_amp = (T_AMP * sc).astype(np.float32)
-        depth = np.arange(T_LINES)[:, None]
-        self._t_colour = np.where(depth < T_LINES // 2, GREEN, DIMGREEN) * NS
-        self._t_dim = (1.15 - 0.5 * depth / T_LINES).astype(np.float32)
+        i0 = np.floor(u)
+        depth = np.arange(T_LINES)
+        self._t_tables = (                                          # geometry, fixed for the app's life
+            i0.astype(np.int32),
+            (u - i0).astype(np.float32),
+            np.broadcast_to(T_HORIZON + (T_ROWS - 1.15 - T_HORIZON) * sc, u.shape).astype(np.float32),
+            np.broadcast_to(T_AMP * sc, u.shape).astype(np.float32),
+            t_ok.astype(np.uint8),
+            (np.where(depth < T_LINES // 2, GREEN, DIMGREEN) * NS).astype(np.int32),
+            (1.15 - 0.5 * depth / T_LINES).astype(np.float32),
+        )
+        self._terrain = native.terrain(*self._t_tables, T_ROWS, NS)
         self.t_floor = None
         self._win = np.hanning(1024).astype(np.float32)
         e = np.round(np.geomspace(3, 512, T_COLS + 1)).astype(int)
@@ -483,8 +487,8 @@ class RadioApp(App):
         if self._shown.get("keys") != k:
             self._draw_keys(buf)
             self._shown["keys"] = k
-        self._draw_scope(buf)
-        self._draw_terrain(buf)
+        self._draw_scope()
+        self._draw_terrain()
         return buf
 
     def _region(self, y0, y1, draw, now):
@@ -562,38 +566,13 @@ class RadioApp(App):
             x0 = KX + i * (KW + GX)
             buf[KY:KY + KH + 1, x0:x0 + KW + 1] = self._key_tile(i, lab, kind, i == self.pressed)
 
-    def _draw_scope(self, buf):
-        h, w = self.phos.shape
-        phos = self.phos
-        phos -= phos >> 1                                     # phosphor decay (x0.5 per frame)
-        mid = h / 2
-        if self.state == "on" and self._cap is not None:
-            s = self.samples
-            n = len(s) - w
-            # trigger on a rising zero crossing so the trace stands still for steady tones
-            zc = np.flatnonzero((s[n // 2:n - 1] < 0) & (s[n // 2 + 1:n] >= 0))
-            i = n // 2 + (int(zc[-1]) if len(zc) else n // 2 - 1)
-            seg = s[i:i + w].astype(np.float32)
-            self.peak = max(float(np.abs(seg).max()), self.peak * 0.96, 300.0)
-            y = mid - seg * ((mid - 6) / self.peak)
-            level = 255
-        else:
-            y = np.full(w, mid, np.float32)
-            level = 115 if self.state in ("off", "error") else 180
-        y = np.clip(y, 2, h - 3).astype(np.intp)
-        nxt = np.append(y[1:], y[-1])
-        lo, hi = np.minimum(y, nxt), np.maximum(y, nxt)
-        # halo just above/below each column's span, then the span itself (the trace core)
-        for r in (lo - 1, hi + 1):
-            phos[r, self._cols] = np.maximum(phos[r, self._cols], level // 2)
-        ln = hi - lo + 1
-        starts = np.repeat(np.cumsum(ln) - ln, ln)
-        rows = np.repeat(lo, ln) + (np.arange(starts.size) - starts)
-        phos[rows, np.repeat(self._cols, ln)] = level
-        np.maximum(phos, self._floor, out=phos)
-        self._buf32[SY0:SY1, SX0:SX1] = self._scope_lut[phos]
+    def _draw_scope(self):
+        live = self.state == "on" and self._cap is not None
+        idle = 115 if self.state in ("off", "error") else 180
+        self.peak = native.scope_frame(self.phos, self.samples if live else None, self._floor,
+                                       self._scope_lut, idle, self.peak, self._buf, SX0, SY0)
 
-    def _draw_terrain(self, buf):
+    def _draw_terrain(self):
         """Waterfall terrain: the live spectrum is the front ridge; every T_EVERY frames it moves
         one step back towards the horizon, shrinking in perspective and fading. Drawn front to
         back with per-column occlusion (a ridge hides what is behind it), one ASCII character
@@ -620,18 +599,6 @@ class RadioApp(App):
             self.hist *= 0.8
         if self._shown.get("terrain_flat") and not self.hist.any():
             return
-        h = self.hist
-        lv = h[self._t_line, self._t_i0] * (1 - self._t_w) + h[self._t_line, self._t_i0 + 1] * self._t_w
-        r = np.clip(np.floor(self._t_base - lv * self._t_amp).astype(np.intp), 0, T_ROWS - 1)
-        r[~self._t_ok] = T_ROWS
-        # occlusion: a ridge shows only where it rises above every ridge in front of it
-        front = np.minimum.accumulate(np.vstack([np.full((1, T_COLS), T_ROWS), r[:-1]]), axis=0)
-        draw = r < front
-        shade = 3 + np.minimum((lv * (NS - 4) * self._t_dim).astype(np.intp), NS - 4)
-        grid = np.zeros((T_ROWS, T_COLS), np.int32)
-        grid[r[draw], np.broadcast_to(self._t_cols, r.shape)[draw]] = (self._t_colour + shade)[draw]
-        tiles = self._t_atlas32[grid]                                       # rows, cols, CH, CW
-        self._buf32[TY0:TY0 + T_ROWS * CH, SX0:SX0 + T_COLS * CW] = \
-            tiles.transpose(0, 2, 1, 3).reshape(T_ROWS * CH, T_COLS * CW)
+        native.terrain_draw(self._terrain, self.hist, self._t_atlas, self._buf, SX0, TY0)
         self.hist[self.hist < 0.005] = 0
         self._shown["terrain_flat"] = not self.hist.any()

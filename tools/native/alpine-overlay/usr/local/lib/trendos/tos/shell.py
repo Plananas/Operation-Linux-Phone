@@ -17,7 +17,7 @@ from .fb import Framebuffer
 from .gfx import text_strip
 from .inputdev import Input
 from .launcher import Launcher, default_entries, settings_entries
-from .render import shared_renderer, MINI, MINI_CW, MINI_CH, matrix
+from .render import MINI, MINI_CW, MINI_CH, draw_view, matrix
 from .stats import StatsPanel
 from .title import TitleAnim
 from . import boot, power
@@ -28,7 +28,6 @@ from .flight import Flight, badge_angles, carousel_angles
 class Shell:
     def __init__(self):
         self.fb = Framebuffer()
-        self.renderer = shared_renderer()
         self.input = Input()
         self.entries = default_entries()
 
@@ -36,7 +35,7 @@ class Shell:
     def take_over_from_boot(self):
         """Paint the boot frame's title/stats parts on every page (the band still shows the
         ramdisk's loading spin), stop that animation and start the sound."""
-        bf = boot.boot_frame(self.renderer, self.entries[0].shape)
+        bf = boot.boot_frame(self.entries[0].shape)
         for pg in self.fb.pages:
             pg[:TOP] = bf[:TOP]
             pg[TOP + BAND:] = bf[TOP + BAND:]
@@ -211,7 +210,7 @@ class Shell:
         x, y = self.BADGE_X, 2
         buf[y:y + self.BADGE_ROWS * MINI_CH, x:x + self.BADGE_COLS * MINI_CW] = 0
         m9 = matrix(*badge_angles(now))
-        self.renderer.view(buf, app.icon_shape, m9, self.BADGE_COLS * 1.45, self.BADGE_COLS,
+        draw_view(buf, app.icon_shape, m9, self.BADGE_COLS * 1.45, self.BADGE_COLS,
                            self.BADGE_ROWS, x, y, MINI, MINI_CW, MINI_CH)
 
     def draw_title(self, buf, key, render):
@@ -258,7 +257,7 @@ class Shell:
         f = np.zeros((H, W, 4), np.uint8)
         x = None if carousel is self.home else 16          # None = centred
         f[TITLE_Y:TITLE_Y + TITLE_H] = text_strip(title_text, 28, ACCENT, TITLE_H, x=x)
-        f[TOP:TOP + BAND] = carousel.render_band(self.renderer, skip_current=skip_current)
+        f[TOP:TOP + BAND] = carousel.render_band(skip_current=skip_current)
         return f
 
     def app_frame(self, app, now, badge=True):
@@ -280,7 +279,7 @@ class Shell:
             # re-render it each frame so it keeps moving. Not when its centred object is the one
             # flying (skip_current): nothing else in it moves, so the static back is enough.
             live_fn = lambda now: self.carousel_frame(live_carousel, live_title, now)
-        self.trans = Slide(back, front, self.renderer, time.monotonic(), opening,
+        self.trans = Slide(back, front, time.monotonic(), opening,
                            live_fn=live_fn, live_side=live_side, overlay=overlay)
         self.held_events = []
         self.trans_target, self.mode = target, "transition"
@@ -308,7 +307,7 @@ class Shell:
         snap = self.fb.pages[(self.page - 1) % NPAGES].copy()          # screen we came from
         self.flight = None
         if entry is not None and app.icon_shape is not None:
-            self.flight = Flight(app.icon_shape, lambda: carousel_angles(entry), self.renderer)
+            self.flight = Flight(app.icon_shape, lambda: carousel_angles(entry))
             y0, y1, x0, x1 = self.flight.rect()
             snap[y0:y1, x0:x1] = 0                                     # it leaves the carousel
         self.launcher_snap = snap
@@ -373,7 +372,7 @@ class Shell:
 
     def draw_launcher(self, buf, now, blend):
         self.clear_base(buf, "launcher")
-        self.launcher.draw(buf, self.page, self.renderer, blend)
+        self.launcher.draw(buf, self.page, blend)
         if self.carousel_is_home:
             st = self.title.state(now - self.start)
             self.draw_title(buf, st, lambda: self.title.render(*st))
@@ -437,7 +436,7 @@ class Shell:
             if self.mode == "launcher" and self.launcher.busy:
                 self.launcher.reset_position()
             self.prev_mode, self.mode = self.mode, "power"
-            self.menu = power.PowerMenu(visible, time.monotonic(), self.renderer)
+            self.menu = power.PowerMenu(visible, time.monotonic())
             self.shown["full"] = [None] * NPAGES
 
     def on_power_menu(self, kind, x, y):

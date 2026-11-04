@@ -10,7 +10,7 @@ from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETT
                      TAP_TIME, DRAG_START)
 from .gfx import canvas, crop_columns, text_strip, to_rgbx, blit
 from . import models
-from .render import matrix
+from .render import draw_band, matrix
 from .apps import CalculatorApp, WifiApp, RadioApp, ClockApp, BluetoothApp, SshApp
 
 
@@ -163,7 +163,7 @@ class Launcher:
                 en.t += dt
 
     # ---- drawing ----
-    def _render_entries(self, band, renderer, blend, skip_current=False):
+    def _render_entries(self, band, blend, skip_current=False):
         """Render the visible entrie(s) + labels into a band array. Returns the touched rects.
         skip_current: leave out the centred object (it is flying to/from an app's badge)."""
         visible = [(self.cur, self.off)]
@@ -182,25 +182,25 @@ class Launcher:
                 m = matrix(APP_TILT, *en.pose())
                 k = K_APP
             if not (skip_current and idx == self.cur):
-                rects.append(renderer.draw(band, en.shape, m, k, dx))
+                rects.append(draw_band(band, en.shape, m, k, dx))
             if en.label is not None:
                 rects.append(blit(band, en.label, LABEL_Y, dx + en.label_x))
         return [r for r in rects if r[1] > r[0] and r[3] > r[2]]
 
-    def draw(self, buf, page, renderer, blend):
+    def draw(self, buf, page, blend):
         """Draw into framebuffer page `page` (off screen): erase what was drawn there last time,
         render the visible object(s) + labels, update the dots if needed."""
         band = buf[TOP:TOP + BAND]
         for y0, y1, x0, x1 in self.dirty[page]:
             band[y0:y1, x0:x1] = 0
-        self.dirty[page] = self._render_entries(band, renderer, blend)
+        self.dirty[page] = self._render_entries(band, blend)
         if self.dots_shown[page] != self.cur:
             band[DOTS_Y:DOTS_Y + 12] = self.dots[self.cur]
             self.dots_shown[page] = self.cur
 
-    def render_band(self, renderer, blend=1.0, skip_current=False):
+    def render_band(self, blend=1.0, skip_current=False):
         """A fresh band image of the current frame (no page/dirty state) for slide snapshots."""
         band = np.zeros((BAND, W, 4), np.uint8)
-        self._render_entries(band, renderer, blend, skip_current)
+        self._render_entries(band, blend, skip_current)
         band[DOTS_Y:DOTS_Y + 12] = self.dots[self.cur]
         return band

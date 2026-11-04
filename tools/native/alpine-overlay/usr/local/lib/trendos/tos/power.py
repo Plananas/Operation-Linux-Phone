@@ -6,11 +6,12 @@ Restart type a status line, fade the whole screen to black and then run the comm
 
 PowerMenu.frame(now) returns (key, draw): the shell calls draw(page) only when the key changed for
 that page, so the menu costs nothing once its animation has settled. Dimming and fading use the
-C helpers in librender.so (Renderer.scale / Renderer.blend) and draw straight into the page.
+C helpers in libtrend (native.scale / native.blend) and draw straight into the page.
 """
 import numpy as np
 from PIL import Image, ImageDraw
 
+from . import native
 from .config import W, H, ACCENT, GREY, DIM
 from .gfx import canvas, font, to_rgbx
 
@@ -35,9 +36,9 @@ def _scale(c, a):
 
 
 class PowerMenu:
-    def __init__(self, snapshot, now, renderer):
+    def __init__(self, snapshot, now):
         """snapshot: the screen currently visible (H x W x 4), shown dimmed behind the card."""
-        self.snap, self.r = snapshot, renderer
+        self.snap = snapshot
         self._card_cache = (None, None)
         self.phase, self.t0 = "open", now        # open -> idle -> close | halting -> fading
         self.pressed = None
@@ -188,10 +189,10 @@ class PowerMenu:
             if a >= 0.99:
                 region[:] = img
             else:
-                self.r.blend(region, img, a)
+                native.blend(region, img, a)
         fa = _ease((k - 0.6) / 0.4)
         if fa > 0.01:
-            self.r.blend(card[CHT - 40:CHT - 20, 20:CWD - 20], self._foot, fa)
+            native.blend(card[CHT - 40:CHT - 20, 20:CWD - 20], self._foot, fa)
         return card
 
     def _card_cached(self, k, t, now):
@@ -208,7 +209,7 @@ class PowerMenu:
         fading = self.phase == "fading"
         f = _ease((now - self.t0) / FADE_T) if fading else 0.0
         q = DIM_TO * (1 - f) if fading else 1 - (1 - DIM_TO) * e
-        self.r.scale(buf, self.snap, q)
+        native.scale(buf, self.snap, q)
         card_a = 1 - f if fading else e
         if card_a > 0.01:
             card = self._card_cached(k, t, now)
@@ -217,7 +218,7 @@ class PowerMenu:
             if card_a >= 0.99:
                 region[:] = card
             else:
-                self.r.blend(region, card, card_a)
+                native.blend(region, card, card_a)
 
 
 def message(text):

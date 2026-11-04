@@ -7,14 +7,14 @@
 import sys
 
 from ..config import APP_SWAY, APP_TILT, K_APP, NS, SHADES
-from ..render import grid_numpy, matrix
+from ..render import matrix, shape_grid
 from . import get, names
 
 
 def show(name, pose):
     shape = get(name)
     print(f"== {name}  pose={pose}  ({len(shape.pts)} points, {len(shape.fnrm)} faces)")
-    for row in grid_numpy(matrix(APP_TILT, *pose), shape, K_APP):
+    for row in shape_grid(matrix(APP_TILT, *pose), shape, K_APP):
         if row.any():
             print("".join(SHADES[v % NS] if v else " " for v in row).rstrip())
 

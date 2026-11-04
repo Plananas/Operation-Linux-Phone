@@ -1,5 +1,5 @@
 """TREND OS configuration: every tunable constant lives here."""
-import math
+import math, os
 
 # ---- hardware ----------------------------------------------------------------------
 W, H = 480, 800                    # sprdfb panel, 32 bpp, byte order R,G,B,X
@@ -12,7 +12,7 @@ BACKLIGHT = "/sys/class/backlight/panel/brightness"
 BRIGHTNESS = 160                   # never write 0: the driver then disables the backlight
 
 # ---- paths ---------------------------------------------------------------------------
-LIBRENDER = "/usr/local/lib/trendos/librender.so"
+LIBTREND = os.environ.get("TREND_LIBTREND", "/usr/local/lib/trendos/libtrend.so")
 SOUND = "/usr/local/share/trendos/startup.wav"
 SOUND_PLAYED = "/run/trendos-sound-played"         # play once per boot, not on respawn
 BOOTANIM_PID = "/dev/.bootanim.pid"                 # written by the ramdisk's bootanim

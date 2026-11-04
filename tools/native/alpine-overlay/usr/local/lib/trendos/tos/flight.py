@@ -13,7 +13,7 @@ import math
 import numpy as np
 
 from .config import W, TOP, BAND, COLS, ROWS, CW, CH, APP_TILT, K_APP
-from .render import TILES, MINI, MINI_CW, MINI_CH, make_tiles, matrix
+from .render import TILES, MINI, MINI_CW, MINI_CH, draw_band, draw_view, make_tiles, matrix
 
 
 def _brighter(t, f):
@@ -42,10 +42,10 @@ def _smooth(x):
 
 
 class Flight:
-    def __init__(self, shape, carousel_pose, renderer):
+    def __init__(self, shape, carousel_pose):
         """carousel_pose() -> (tilt, a, b, c) of the object in the carousel now (it keeps
         swaying while the app slides out, so closing lands on its live pose)."""
-        self.shape, self.r = shape, renderer
+        self.shape = shape
         self.pose0 = carousel_pose
         # sizes in px per unit of projection (K * cell width), centres in screen px
         self.s0, self.s1 = K_APP * CW, BADGE_K * MINI_CW
@@ -56,7 +56,7 @@ class Flight:
         """Screen rect (y0, y1, x0, x1) of the object at its carousel start (to cut it out of
         the launcher snapshot)."""
         band = np.zeros((ROWS * CH, COLS * CW, 4), np.uint8)
-        y0, y1, x0, x1 = self.r.draw(band, self.shape, matrix(*self.pose0()), K_APP, 0)
+        y0, y1, x0, x1 = draw_band(band, self.shape, matrix(*self.pose0()), K_APP, 0)
         return (TOP + y0, TOP + y1, x0, x1)
 
     def draw(self, buf, p, now):
@@ -86,7 +86,7 @@ class Flight:
         cols += (cols - want) % 2
         rows += (rows - want) % 2
         x, y = int(round(cx - cols * cw / 2)), int(round(cy - rows * ch / 2))
-        self.r.view(buf, self.shape, matrix(*ang), K, cols, rows, x, y, atlas, cw, ch)
+        draw_view(buf, self.shape, matrix(*ang), K, cols, rows, x, y, atlas, cw, ch)
 
 
 def carousel_angles(entry):

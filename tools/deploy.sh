@@ -13,7 +13,8 @@ FILES="usr/local/bin/trendos.py usr/local/bin/mksound.py usr/local/bin/mkcharger
        var/lib/go-librespot/config.yml usr/local/share/trendos/fonts"
 echo "== copying files to $HOST"
 tar -C "$O" --owner=0 --group=0 --exclude=__pycache__ -cf - $FILES | ssh "$HOST" 'tar -C / -xf -'
-scp -q tools/native/render.c "$HOST:/tmp/render.c"
+ssh "$HOST" 'rm -rf /tmp/libtrend-src && mkdir /tmp/libtrend-src'
+tar -C native/libtrend --exclude=libtrend.so --exclude=test_libtrend -cf - include src | ssh "$HOST" 'tar -C /tmp/libtrend-src -xf -'
 # Spotify player engine (built by tools/spotify/build-go-librespot.sh, not in git): with SPOTIFY=1, copy if changed
 GLR=tools/spotify/go-librespot
 if [ "${SPOTIFY:-0}" = 1 ] && [ -f "$GLR" ] && [ "$(ssh "$HOST" 'md5sum < /usr/local/bin/go-librespot 2>/dev/null')" != "$(md5sum < "$GLR")" ]; then
@@ -21,10 +22,12 @@ if [ "${SPOTIFY:-0}" = 1 ] && [ -f "$GLR" ] && [ "$(ssh "$HOST" 'md5sum < /usr/l
 	ssh "$HOST" 'rc-service spotify stop >/dev/null 2>&1; true'
 	scp -q "$GLR" "$HOST:/usr/local/bin/go-librespot"
 fi
-echo "== building librender.so, restarting the shell"
+echo "== building libtrend.so, restarting the shell"
 ssh "$HOST" "SPOTIFY=${SPOTIFY:-0}; "'set -e
-gcc -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/librender.so /tmp/render.c -lm
-rm -f /tmp/render.c
+cd /tmp/libtrend-src
+gcc -std=gnu11 -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/libtrend.so src/*.c -lm
+cd /
+rm -rf /tmp/libtrend-src /usr/local/lib/trendos/librender.so
 find /usr/local/lib/trendos -name __pycache__ -type d -exec rm -rf {} +
 rm -f /usr/local/bin/cube.py
 rc-service bootscreen restart >/dev/null
