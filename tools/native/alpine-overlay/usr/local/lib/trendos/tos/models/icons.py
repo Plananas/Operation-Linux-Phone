@@ -211,3 +211,23 @@ def bluetooth(depth=0.16):
     oval = relief(lambda x, y: BLUE if (x / rx) ** 2 + (y / ry) ** 2 <= 1 else None, depth, extent=1.25)
     rune = relief(lambda x, y: WHITE if on_rune(x, y, 0.11) else None, 0.07, extent=1.0)
     return Shape.combine(oval, rune.transformed(t=(0, 0, -(depth + 0.07))))
+
+
+# Terminal prompt ">_": polylines in the screen's plane
+_PROMPT = [[(-0.78, 0.5), (-0.1, 0.0), (-0.78, -0.5)], [(0.12, -0.52), (0.82, -0.52)]]
+
+
+@model("terminal", GREEN)
+def terminal(depth=0.18):
+    """SSH: a green terminal screen with a ">_" prompt cut right through it, so the background
+    shows through (raised glyphs get lost at this resolution; clean cut-outs read better)."""
+    rx, ry, r = 1.25, 1.0, 0.2
+
+    def on_screen(x, y):
+        dx, dy = max(abs(x) - (rx - r), 0.0), max(abs(y) - (ry - r), 0.0)
+        return dx * dx + dy * dy <= r * r
+
+    def on_prompt(x, y):
+        return any(_seg_dist(x, y, ax, ay, bx, by) < 0.17
+                   for path in _PROMPT for (ax, ay), (bx, by) in zip(path, path[1:]))
+    return relief(lambda x, y: GREEN if on_screen(x, y) and not on_prompt(x, y) else None, depth)

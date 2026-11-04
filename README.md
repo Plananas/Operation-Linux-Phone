@@ -38,6 +38,8 @@ title bar.
   through the speaker even with the screen off or another app open; volume key = snooze 5 min.
   A 3D clock with real moving hands sits next to the next alarm (it shakes when ringing).
   The phone sets its own time from the internet over Wi-Fi (UK time, summer time included).
+- **SSH** (the terminal screen) — who is connected over SSH right now: address, USB or Wi-Fi,
+  how long, which key, what they are running, plus a log of logins and rejected attempts. View only.
 - **Radio** (the mast icon) — FM radio. **Plug in wired headphones first: they're the antenna.**
   Opening it switches the radio on (takes ~4 s), closing it switches it off. Drag or flick the
   tuning drum (or tap a number on it); `<` `>` step 0.1 MHz (hold to repeat), `<<` `>>` jump
