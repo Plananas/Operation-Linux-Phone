@@ -2,7 +2,7 @@
 
 | Path | What it is | How it runs |
 |---|---|---|
-| `libtrend/` | The C core: pixels, 2D drawing, 3D meshes, visualisers | Shared library, called from Python |
+| `libtrend/` | The C core: pixels, 2D drawing, 3D meshes, visualisers, apps | Shared library, called from Python |
 | `boot/` | `bootanim`, `charger`, `fbpan`: small static programs in the ramdisk | Standalone, before Python exists |
 
 Our kernel is the other C in the project. It's built from Samsung's source (`tools/kernel/`).
@@ -47,6 +47,21 @@ Because no state is hidden, every function can be tested alone and called from a
 2. Add a test to `tests/test_libtrend.c`.
 3. Add its signature to `_SIGNATURES` in `tos/native.py`, with a Python wrapper below it.
 4. Measure on the phone before and after. In-order Cortex-A7 notes are in `PLAN.md`.
+
+## Apps in C
+
+An app can live entirely in `src/apps/`, with a thin class in `tos/apps/` connecting it to the
+shell. Calculator is the example:
+
+- `expr.c`: the pure logic, usable by anything.
+- `apps/calculator.c`: behaviour. The state is opaque to Python. Each function takes the state in
+  and writes the next state out.
+- `apps/calculator_view.c`: drawing, a pure function from state and time to pixels. Redraw the whole
+  app area each time rather than caching tiles, unless a measurement says otherwise.
+- `tos/apps/calculator.py`: forwards touches, and supplies the fonts PIL rasterises once.
+
+Apps that drive hardware or run tools like `bluetoothctl` keep that part in Python, in a worker
+thread, and pass the results to C.
 
 ## Building and testing
 
