@@ -14,7 +14,7 @@ import numpy as np
 from .config import (W, H, NPAGES, TOP, TITLE, TITLE_Y, TITLE_H, BAND, ACCENT, GREET_NAME, BLEND,
                      MAX_FPS, SLEEP_AFTER, LONG_PRESS, KEY_HOME, KEY_BACK, KEY_POWER)
 from .fb import Framebuffer
-from .gfx import text_strip
+from .canvas import text_strip
 from .inputdev import Input
 from .launcher import Launcher, default_entries, settings_entries
 from .render import MINI, MINI_CW, MINI_CH, draw_view, matrix

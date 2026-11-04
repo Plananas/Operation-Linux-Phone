@@ -5,7 +5,7 @@ numbers; they never see a pointer. Like the C underneath, these functions keep n
 reads its inputs and writes only to the output array it was given.
 """
 import ctypes
-from ctypes import POINTER, Structure, c_float, c_int, c_int32, c_size_t, c_uint8, c_uint32, c_void_p
+from ctypes import Structure, c_double, c_float, c_int, c_size_t, c_uint32, c_void_p
 
 import numpy as np
 
@@ -50,6 +50,12 @@ class Terrain(Structure):
                 ("ridges", c_int), ("cols", c_int), ("rows", c_int), ("shades", c_int)]
 
 
+class Dial(Structure):
+    _fields_ = [("mips", c_void_p), ("key", c_void_p), ("lut", c_void_p), ("offset", c_void_p),
+                ("mip_of_col", c_void_p), ("tape_start", c_double), ("px_per_unit", c_double),
+                ("rows", c_int), ("cols", c_int), ("tape_w", c_int)]
+
+
 _vp, _i, _f = c_void_p, c_int, c_float
 _SIGNATURES = {
     "tr_rgb_to_rgbx":     (None, [_vp, _vp, c_size_t]),
@@ -60,12 +66,14 @@ _SIGNATURES = {
     "tr_grid_blit":       (Rect, [_vp, _i, _i, Atlas, Surface, _i, _i]),
     "tr_mesh_draw":       (Rect, [Mesh, _vp, View, Atlas, Surface, _i, _i]),
     "tr_fill_rect":       (None, [Surface, Rect, c_uint32]),
+    "tr_fill_stripes":    (None, [Surface, Rect, _i, c_uint32]),
     "tr_stroke_rect":     (None, [Surface, Rect, c_uint32]),
     "tr_fill_round_rect": (None, [Surface, Rect, _i, c_uint32]),
     "tr_fill_mask":       (None, [Surface, _vp, _i, _i, _i, _i, c_uint32]),
     "tr_draw_text":       (_f, [Surface, _vp, _vp, _i, _f, _i, c_uint32]),
     "tr_scope_frame":     (_f, [_vp, _i, _i, Scope, _f, Surface, _i, _i]),
     "tr_terrain_draw":    (None, [Terrain, _vp, Atlas, Surface, _i, _i]),
+    "tr_dial_draw":       (None, [Dial, c_double, Surface, _i, _i]),
 }
 
 
@@ -163,6 +171,11 @@ def fill_rect(dst, y0, y1, x0, x1, c):
     _lib.tr_fill_rect(surface(dst), Rect(y0, y1, x0, x1), colour(c))
 
 
+def fill_stripes(dst, y0, y1, x0, x1, step, c):
+    """Fill rows y0, y0 + step, ... within the rectangle (CRT scanlines)."""
+    _lib.tr_fill_stripes(surface(dst), Rect(y0, y1, x0, x1), step, colour(c))
+
+
 def stroke_rect(dst, y0, y1, x0, x1, c):
     _lib.tr_stroke_rect(surface(dst), Rect(y0, y1, x0, x1), colour(c))
 
@@ -205,3 +218,15 @@ def terrain(band, blend_, base, amp, visible, colour_, dim, rows, shades):
 def terrain_draw(t, history, at, dst, x, y):
     """Paint the spectrum history (ridges x cols, 0..1) as rows of shaded cells at (x, y)."""
     _lib.tr_terrain_draw(t, history.ctypes.data, at, surface(dst), x, y)
+
+
+def dial(mips, key, lut, offset, mip_of_col, tape_start, px_per_unit):
+    """A Dial over contiguous arrays: mips uint8 [n][rows][tape_w], key uint16 [rows][cols],
+    lut uint32, offset float64 [cols], mip_of_col int32 [cols]. They must outlive it."""
+    _, rows, tape_w = mips.shape
+    return Dial(*map(ptr, (mips, key, lut, offset, mip_of_col)), tape_start, px_per_unit, rows, len(offset), tape_w)
+
+
+def dial_draw(d, position, dst, x, y):
+    """Paint the drum into dst at (x, y), turned to position."""
+    _lib.tr_dial_draw(d, position, surface(dst), x, y)

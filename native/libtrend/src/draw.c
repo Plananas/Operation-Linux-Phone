@@ -17,6 +17,17 @@ void tr_fill_rect(tr_surface dst, tr_rect r, tr_colour c)
 		fill_span(tr_row32(dst, y), clip.x0, clip.x1, c);
 }
 
+void tr_fill_stripes(tr_surface dst, tr_rect r, int step, tr_colour c)
+{
+	const tr_rect clip = tr_rect_clip(r, dst);
+	if (tr_rect_is_empty(clip) || step < 1)
+		return;
+	const int skipped = clip.y0 - r.y0;            /* stay in phase when clipped at the top */
+	const int first = clip.y0 + (step - skipped % step) % step;
+	for (int y = first; y < clip.y1; y += step)
+		fill_span(tr_row32(dst, y), clip.x0, clip.x1, c);
+}
+
 void tr_stroke_rect(tr_surface dst, tr_rect r, tr_colour c)
 {
 	tr_fill_rect(dst, (tr_rect){ r.y0, r.y0 + 1, r.x0, r.x1 }, c);

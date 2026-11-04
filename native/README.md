@@ -23,6 +23,10 @@ Move code to C when all of these are true:
 `tos/native.py` is the only Python file that may import `ctypes`. Everything else calls ordinary
 Python functions and passes numpy arrays.
 
+Move the whole loop, not just its body. Each Python-to-C call costs about 0.1 ms on the phone, so
+230 calls to draw a card's scanlines cost more than the drawing did. One `tr_fill_stripes` call
+fixed that.
+
 ## Style
 
 libtrend is written in a functional style that doesn't give up speed:

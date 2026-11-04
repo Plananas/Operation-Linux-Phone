@@ -3,7 +3,7 @@ import struct, subprocess, sys, time
 
 EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
 SLOT, TRACK, X, Y = 0x2f, 0x39, 0x35, 0x36
-tid = 1000
+tid = int(time.time()) % 100000 * 10
 
 
 def ev(f, t, c, v):
@@ -22,8 +22,10 @@ def stroke(points, dt=0.03):
     tid += 1
     with open("/dev/input/event1", "wb", buffering=0) as f:
         ev(f, EV_ABS, SLOT, 0); ev(f, EV_ABS, TRACK, tid)
+        # The kernel drops a repeated value. A shell that restarted since the last gesture would
+        # never see the Y, and would take every touch to be at y = 0, so vary it per gesture.
         for x, y in points:
-            ev(f, EV_ABS, X, x); ev(f, EV_ABS, Y, y); ev(f, EV_SYN, 0, 0)
+            ev(f, EV_ABS, X, x); ev(f, EV_ABS, Y, y + tid % 7); ev(f, EV_SYN, 0, 0)
             time.sleep(dt)
         ev(f, EV_ABS, TRACK, -1); ev(f, EV_SYN, 0, 0)
 

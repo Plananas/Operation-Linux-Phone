@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 from ..config import W, TOP, APP_H, ACCENT, SHADES, NS, CW, CH, GREEN, DIMGREEN
 from ..render import card_tiles
 from ..gfx import font, to_rgbx, text_len, draw_text
-from .. import audio, fm, native
+from .. import audio, canvas, fm, native
 from ..ui import BG, FRAME, FRAME_HI, PANEL, SCAN, DIM, MID, FLARE, ERR, KEY_STYLE, mix as _mix, card as _card
 from .base import App
 
@@ -354,9 +354,8 @@ class RadioApp(App):
     def _prerender(self):
         im = Image.new("RGB", (W, APP_H), BG); d = ImageDraw.Draw(im)
         _card(d, DISP, "fm"); _card(d, SCOPE, "scope"); _card(d, DIAL, "tune")
-        self._base_im = im
-        self._buf = to_rgbx(im).copy()
-        self._buf32 = self._buf.view(np.uint32).reshape(APP_H, W)
+        self._base = to_rgbx(im)                                    # the empty cards, for restoring regions
+        self._buf = self._base.copy()
         self._shown = {}
         # scope: plain tube (no scanlines) with a dotted graticule as a phosphor floor
         h, w = self.phos.shape
@@ -426,17 +425,12 @@ class RadioApp(App):
         # per screen column: tape offset (MHz) at its left edge, tape width behind it, shade
         xb = np.arange(DX0, DX1 + 1) - 0.5
         off = np.degrees(np.arcsin(np.clip((xb - CX) / R, -1, 1))) / DEG_PER_MHZ
-        self._dial_off = off[:-1]
         width = np.maximum(1, np.ceil(np.diff(off) * PX_PER_MHZ)).astype(np.intp)
         mips = [tape]
         for k in range(2, int(width.max()) + 1):                # mips[k-1][:, x] = max(tape[:, x:x+k])
             m = mips[-1].copy()
             m[:, :-(k - 1)] = np.maximum(m[:, :-(k - 1)], tape[:, k - 1:])
             mips.append(m)
-        self._mips = np.stack(mips)
-        self._mip_of_col = (width - 1)[None, :]
-        self._tape_rows = np.arange(tape.shape[0])[:, None]
-        self._tape_w = tw
         # lookup table: [scanline?][shade 0..15][intensity] -> RGBX (max of background, ink)
         xc = np.arange(DX0, DX1) - CX
         shade = np.cos(np.arcsin(np.clip(xc / R, -1, 1))) ** 1.6
@@ -449,8 +443,14 @@ class RadioApp(App):
                 for i in range(256):
                     ink = _mix(BG, ACCENT, i / 255 * q / 15)
                     lut[r, q, i, :3] = tuple(max(a, b) for a, b in zip(ink, bgc))
-        self._dial_lut = lut.view(np.uint32).reshape(-1)
-        self._dial_key = (scan[:, None] << 12) | (sq[None, :] << 8)     # per pixel: lut row
+        self._dial_tables = (                                       # geometry, fixed for the app's life
+            np.stack(mips),
+            (scan[:, None] << 12) | (sq[None, :] << 8),                 # per pixel: lut row
+            lut.view(np.uint32).reshape(-1),
+            off[:-1],
+            (width - 1).astype(np.int32),
+        )
+        self._dial = native.dial(*self._dial_tables, self._tape_f0, PX_PER_MHZ)
         # needle with a phosphor glow: a narrow strip composited with max()
         nh = DIAL[3] - 8 - (DIAL[1] + 6)
         nd = Image.new("RGB", (9, nh), BG); dd = ImageDraw.Draw(nd)
@@ -491,13 +491,12 @@ class RadioApp(App):
         self._draw_terrain()
         return buf
 
-    def _region(self, y0, y1, draw, now):
-        """Redraw rows y0..y1 of the app area from the base image with a PIL draw function."""
-        im = self._base_im.crop((0, y0, W, y1))
-        draw(im, ImageDraw.Draw(im), y0, now)
-        self._buf[y0:y1] = to_rgbx(im)
+    def _region(self, y0, y1, paint, now):
+        """Redraw rows y0..y1 of the app area: restore the empty card, then paint over it."""
+        self._buf[y0:y1] = self._base[y0:y1]
+        paint(self._buf, now)
 
-    def _draw_status(self, im, d, oy, now):
+    def _draw_status(self, buf, now):
         if self.state == "starting":
             status, scol = "> powering up " + SPIN[int(now * 8) % 4], ACCENT
         elif self.state == "error":
@@ -507,36 +506,33 @@ class RadioApp(App):
             status, scol = f"> {where}    rssi {self.rssi if self.rssi is not None else '--'}", MID
         else:
             status, scol = "> off   (headphones = antenna)", MID
-        y = DISP[1] + 14 - oy
-        draw_text(im, 30, y, status, 17, scol)
+        y = DISP[1] + 14
+        canvas.text(buf, 30, y, status, 17, scol)
         vx = DISP[2] - 16 - fm.HP_VOL_MAX * 8
-        draw_text(im, vx - 34, y, "vol", 17, MID)
+        canvas.text(buf, vx - 34, y, "vol", 17, MID)
         for i in range(fm.HP_VOL_MAX):
             x = vx + i * 8
-            d.rectangle([x, y + 4, x + 5, y + 16], fill=ACCENT if i < self.vol else DIM)
+            canvas.fill_rect(buf, y + 4, y + 17, x, x + 6, ACCENT if i < self.vol else DIM)
 
-    def _draw_freq(self, im, d, oy, now):
+    def _draw_freq(self, buf, now):
         txt = f"{self.target():.1f}"
         col = ACCENT if self.state == "on" else MID
         right = 360
-        draw_text(im, right - text_len(txt, 84), DISP[1] + 44 - oy, txt, 84, col)
-        draw_text(im, right + 12, DISP[1] + 92 - oy, "MHz", 26, col)
+        canvas.text(buf, right - canvas.text_width(txt, 84), DISP[1] + 44, txt, 84, col)
+        canvas.text(buf, right + 12, DISP[1] + 92, "MHz", 26, col)
 
-    def _draw_bar(self, im, d, oy, now):
-        y, x0, x1 = DISP[3] - 20 - oy, 40, W - 40
+    def _draw_bar(self, buf, now):
+        y, x0, x1 = DISP[3] - 20, 40, W - 40
         span = fm.BAND[1] - fm.BAND[0]
-        d.line([(x0, y), (x1, y)], fill=FRAME)
+        canvas.fill_rect(buf, y, y + 1, x0, x1 + 1, FRAME)
         for mhz in range(88, 109, 2):
-            x = x0 + (mhz - fm.BAND[0]) / span * (x1 - x0)
-            d.line([(x, y - 3), (x, y + 3)], fill=FRAME)
-        x = x0 + (self.disp_f - fm.BAND[0]) / span * (x1 - x0)
-        d.rectangle([x - 2, y - 7, x + 2, y + 7], fill=FLARE if self.state == "on" else MID)
+            x = int(x0 + (mhz - fm.BAND[0]) / span * (x1 - x0))
+            canvas.fill_rect(buf, y - 3, y + 4, x, x + 1, FRAME)
+        x = int(x0 + (self.disp_f - fm.BAND[0]) / span * (x1 - x0))
+        canvas.fill_rect(buf, y - 7, y + 8, x - 2, x + 3, FLARE if self.state == "on" else MID)
 
     def _draw_dial(self, buf):
-        u = (self.disp_f - self._tape_f0 + self._dial_off) * PX_PER_MHZ
-        idx = np.clip(u.astype(np.intp), 0, self._tape_w - 1)[None, :]
-        g = self._mips[self._mip_of_col, self._tape_rows, idx]            # (rows, cols) uint8
-        self._buf32[self._dy0:self._dy1, DX0:DX1] = self._dial_lut[self._dial_key | g]
+        native.dial_draw(self._dial, self.disp_f, buf, DX0, self._dy0)
         y0, n0 = self._needle_y, CX - 4
         strip = buf[y0:y0 + self._needle.shape[0], n0:n0 + 9]
         np.maximum(strip, self._needle, out=strip)

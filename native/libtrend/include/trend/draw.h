@@ -17,6 +17,9 @@ typedef struct {
 
 void tr_fill_rect(tr_surface dst, tr_rect r, tr_colour c);
 
+/* Fill rows r.y0, r.y0 + step, r.y0 + 2 * step, ... within r (CRT scanlines). */
+void tr_fill_stripes(tr_surface dst, tr_rect r, int step, tr_colour c);
+
 /* One-pixel-wide outline just inside r. */
 void tr_stroke_rect(tr_surface dst, tr_rect r, tr_colour c);
 

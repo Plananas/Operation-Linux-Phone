@@ -6,7 +6,8 @@ import numpy as np
 
 from .config import (W, H, TOP, BAND, TITLE, TITLE_Y, TITLE_H, STATS_Y, STATS_H, ACCENT, GREY, DIM,
                      ROWS, COLS, CH, CW, BOOT_FPS, BOOT_N, BOOTANIM_PID, SOUND, SOUND_PLAYED)
-from .gfx import canvas, centre_text, font, text_strip, to_rgbx
+from .canvas import text_strip
+from .gfx import canvas, centre_text, font, to_rgbx
 from .render import TILES, boot_matrix, compose, shape_grid
 
 

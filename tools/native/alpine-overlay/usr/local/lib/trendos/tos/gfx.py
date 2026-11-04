@@ -53,14 +53,6 @@ def centre_text(d, y, txt, f, colour, w=W):
     d.text(((w - d.textlength(txt, font=f)) / 2, y), txt, fill=colour, font=f)
 
 
-def text_strip(txt, size, colour, h, bold=True, x=None):
-    """A screen-wide strip with one line of text, centred unless x is given."""
-    im, d = canvas(h)
-    f = font(size, bold)
-    d.text(((W - d.textlength(txt, font=f)) / 2 if x is None else x, 0), txt, fill=colour, font=f)
-    return to_rgbx(im)
-
-
 def crop_columns(img):
     """Trim empty columns: returns (x offset, cropped copy). X byte forced to 0."""
     img = img.copy(); img[..., 3] = 0

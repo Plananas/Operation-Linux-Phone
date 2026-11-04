@@ -82,6 +82,25 @@ float tr_scope_frame(uint8_t *phos, int h, int w, tr_scope scope, float peak,
 	return next_peak;
 }
 
+/* ---- tuning drum ---- */
+
+void tr_dial_draw(tr_dial d, double position, tr_surface dst, int x, int y)
+{
+	const size_t mip_bytes = (size_t)d.rows * (size_t)d.tape_w;
+	const uint8_t *column[d.cols];     /* where each screen column reads the tape */
+	for (int c = 0; c < d.cols; c++) {
+		const int at = tr_clamp((int)((position - d.tape_start + d.offset[c]) * d.px_per_unit), 0, d.tape_w - 1);
+		column[c] = d.mips + (size_t)d.mip_of_col[c] * mip_bytes + at;
+	}
+	for (int r = 0; r < d.rows; r++) {
+		uint32_t *out = tr_row32(dst, y + r) + x;
+		const uint16_t *key = d.key + r * d.cols;
+		const size_t line = (size_t)r * (size_t)d.tape_w;
+		for (int c = 0; c < d.cols; c++)
+			out[c] = d.lut[key[c] | column[c][line]];
+	}
+}
+
 /* ---- terrain ---- */
 
 static inline int shade_of(float level, float dim, int shades)

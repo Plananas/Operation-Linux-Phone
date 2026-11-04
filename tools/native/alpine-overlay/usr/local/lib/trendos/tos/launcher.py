@@ -8,7 +8,8 @@ import numpy as np
 
 from .config import (W, BAND, NPAGES, TOP, LABEL_Y, DOTS_Y, ACCENT, GREY, PALETTE, K_BOOT, K_APP, BOOT_TILT, BOOT_W, FULL_RATES, APP_SWAY, APP_TILT, SWIPE_FRACTION, SWIPE_FLICK,
                      TAP_TIME, DRAG_START)
-from .gfx import canvas, crop_columns, text_strip, to_rgbx, blit
+from .canvas import text_strip
+from .gfx import canvas, crop_columns, to_rgbx, blit
 from . import models
 from .render import draw_band, matrix
 from .apps import CalculatorApp, WifiApp, RadioApp, ClockApp, BluetoothApp, SshApp

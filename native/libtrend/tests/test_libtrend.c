@@ -71,6 +71,22 @@ static void test_fill_and_clip(void)
 	tr_fill_rect(s, (tr_rect){ 20, 30, 20, 30 }, RED); /* entirely outside: no crash */
 }
 
+static void test_stripes(void)
+{
+	uint32_t px[10 * 4] = { 0 };
+	const tr_surface s = { (uint8_t *)px, 16, 4, 10 };
+	tr_fill_stripes(s, (tr_rect){ 1, 8, 1, 3 }, 3, RED);
+	CHECK(at(s, 1, 1) == RED && at(s, 1, 4) == RED && at(s, 1, 7) == RED);
+	CHECK(at(s, 1, 2) == 0 && at(s, 1, 8) == 0);
+	CHECK(at(s, 0, 1) == 0 && at(s, 3, 1) == 0);
+	memset(px, 0, sizeof(px));
+	/* Clipped at the top: rows -2, 1, 4 ... stay in phase with the unclipped rectangle. */
+	tr_fill_stripes(s, (tr_rect){ -2, 5, 0, 1 }, 3, BLUE);
+	CHECK(at(s, 0, 0) == 0 && at(s, 0, 1) == BLUE && at(s, 0, 4) == BLUE);
+	tr_fill_stripes(s, (tr_rect){ 0, 5, 0, 1 }, 0, RED);  /* a step of 0 must not hang */
+	CHECK(at(s, 0, 0) == 0);
+}
+
 static void test_surface_stride(void)
 {
 	/* A surface inside a larger page must not touch pixels outside it. */
@@ -295,11 +311,42 @@ static void test_terrain(void)
 		CHECK(px[i] == 0);
 }
 
+static void test_dial(void)
+{
+	enum { ROWS = 2, COLS = 3, TAPE_W = 10, MIPS = 2 };
+	static uint8_t mips[MIPS][ROWS][TAPE_W];
+	for (int m = 0; m < MIPS; m++)
+		for (int r = 0; r < ROWS; r++)
+			for (int t = 0; t < TAPE_W; t++)
+				mips[m][r][t] = (uint8_t)(m * 100 + r * 20 + t);
+	const uint16_t key[ROWS * COLS] = { 0, 0, 0, 256, 256, 256 };
+	static uint32_t lut[512];
+	for (uint32_t i = 0; i < 512; i++)
+		lut[i] = i;
+	const double offset[COLS] = { 0.0, 1.0, 2.0 };
+	const int32_t mip_of_col[COLS] = { 0, 1, 0 };
+	const tr_dial d = { &mips[0][0][0], key, lut, offset, mip_of_col, 0.0, 1.0, ROWS, COLS, TAPE_W };
+	uint32_t px[ROWS * COLS];
+	const tr_surface s = { (uint8_t *)px, COLS * 4, COLS, ROWS };
+
+	tr_dial_draw(d, 3.0, s, 0, 0);
+	CHECK(at(s, 0, 0) == 3);                   /* mip 0, row 0, tape 3 */
+	CHECK(at(s, 1, 0) == 100 + 4);             /* mip 1, tape 4 */
+	CHECK(at(s, 2, 0) == 5);                   /* mip 0, tape 5 */
+	CHECK(at(s, 0, 1) == 256 + 20 + 3);        /* row 1, with its key's high bits */
+
+	tr_dial_draw(d, -50.0, s, 0, 0);           /* off the left end: clamped */
+	CHECK(at(s, 0, 0) == 0);
+	tr_dial_draw(d, 500.0, s, 0, 0);           /* off the right end: clamped */
+	CHECK(at(s, 0, 0) == TAPE_W - 1);
+}
+
 int main(void)
 {
 	test_rgb_to_rgbx();
 	test_slide_frame();
 	test_fill_and_clip();
+	test_stripes();
 	test_surface_stride();
 	test_round_rect();
 	test_fill_mask();
@@ -309,6 +356,7 @@ int main(void)
 	test_scope_idle();
 	test_scope_audio();
 	test_terrain();
+	test_dial();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

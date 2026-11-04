@@ -7,6 +7,7 @@ cut into the top edge, and outlined keys (as in the Calculator, Radio and Clock)
 """
 from PIL import Image, ImageDraw
 
+from . import canvas
 from .config import ACCENT, PALETTE, RED
 from .gfx import font, text_len, draw_text
 
@@ -79,3 +80,9 @@ class Keys:
     def draw(self, im, pressed=None):
         for kid, kx, ky, w, h, label, kind, size in self.keys:
             im.paste(key_image(w, h, label, kind, kid == pressed, size), (kx, ky))
+
+
+def native_card(dst, box, label):
+    """The same card as card(), drawn straight into an RGBX array through libtrend. Use this for
+    screens redrawn often. box = (x0, y0, x1, y1), half-open."""
+    canvas.card(dst, box, label, FRAME, PANEL, SCAN, FRAME_HI, BG)

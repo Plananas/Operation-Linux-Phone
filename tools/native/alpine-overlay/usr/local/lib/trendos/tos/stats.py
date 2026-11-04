@@ -1,13 +1,12 @@
 """System stats sampling and the stats panel at the bottom of the launcher.
 
-Rendering a row with PIL costs ~6 ms, so rows are rendered one per frame (off-screen) and each
-framebuffer page copies the rows it is missing when that page is drawn - never touching the page
-that is on screen.
+Rows are rendered one per frame (off-screen) and each framebuffer page copies the rows it is
+missing when that page is drawn - never touching the page that is on screen.
 """
 import os, time
 
 from .config import W, NPAGES, STATS_Y, ACCENT, DIM, TEXT
-from .gfx import canvas, font, to_rgbx
+from .canvas import blank, fill_rect, stroke_rect, text
 
 ROWS = 6
 
@@ -87,7 +86,7 @@ def bar_colour(frac, invert=False):
 
 def row_spec(i, s, fps):
     """What stats row i shows: (label, bar fraction or None, bar colour, text). Cheap to compute;
-    the panel only re-renders a row with PIL when its spec changed."""
+    the panel only re-renders a row when its spec changed."""
     if i == 0:
         f = s["cpu"] / 100
         return "CPU", round(f, 2), bar_colour(f), f"{s['cpu']:3.0f}% {s['cores']}c {s['freq']:.2f}GHz {s['ctemp']}\u00b0C"
@@ -110,21 +109,21 @@ def row_spec(i, s, fps):
 
 def render_row(i, spec):
     """Stats row i -> (y offset in panel, RGBX image). Row 0 includes the divider line."""
-    label, frac, colour, text = spec
+    label, frac, colour, value = spec
     y0, h = (0, 38) if i == 0 else (12 + 26 * i, 26)
-    im, d = canvas(h)
+    im = blank(h)
     if i == 0:
-        d.line([(16, 2), (W - 16, 2)], fill=DIM, width=1)
+        fill_rect(im, 2, 3, 16, W - 15, DIM)
     LX, BX, BW, VX = 18, 70, 150, 232
     y = 12 + 26 * i - y0
-    d.text((LX, y), label, fill=ACCENT, font=font(15))
+    text(im, LX, y, label, 15, ACCENT)
     if frac is None:
-        d.text((BX, y), text, fill=TEXT, font=font(15, bold=False))
+        text(im, BX, y, value, 15, TEXT)
     else:
-        d.rectangle([BX, y + 3, BX + BW, y + 15], outline=DIM)
-        d.rectangle([BX + 1, y + 4, BX + 1 + int((BW - 2) * max(0, min(1, frac))), y + 14], fill=colour)
-        d.text((VX, y), text, fill=TEXT, font=font(15, bold=False))
-    return y0, to_rgbx(im)
+        stroke_rect(im, y + 3, y + 16, BX, BX + BW + 1, DIM)
+        fill_rect(im, y + 4, y + 15, BX + 1, BX + 2 + int((BW - 2) * max(0, min(1, frac))), colour)
+        text(im, VX, y, value, 15, TEXT)
+    return y0, im
 
 
 class StatsPanel:
@@ -147,7 +146,7 @@ class StatsPanel:
     def update(self, now, fps, may_render=True):
         if now >= self.next_sample:
             self.data, self.pending, self.next_sample = self.stats.sample(), 0, now + 1.0
-        while may_render and self.pending < ROWS:      # at most one PIL render per frame
+        while may_render and self.pending < ROWS:      # at most one row render per frame
             i = self.pending
             self.pending += 1
             spec = row_spec(i, self.data, fps)

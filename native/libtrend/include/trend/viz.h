@@ -38,4 +38,19 @@ typedef struct {
  * ones, painting every cell at (x, y). atlas tile 0 is the empty background. */
 void tr_terrain_draw(tr_terrain t, const float *history, tr_atlas atlas, tr_surface dst, int x, int y);
 
+/* A flat tape wrapped round a drum. Each screen column reads the tape through a pre-filtered copy
+ * ("mip") whose width matches how much tape lies behind that column. */
+typedef struct {
+	const uint8_t *mips;           /* [n_mips][rows][tape_w] tape intensity */
+	const uint16_t *key;           /* rows x cols: per pixel, the high bits of the lut index */
+	const uint32_t *lut;           /* key | intensity -> pixel */
+	const double *offset;          /* cols: tape position at each column, relative to the centre */
+	const int32_t *mip_of_col;     /* cols */
+	double tape_start, px_per_unit;
+	int rows, cols, tape_w;
+} tr_dial;
+
+/* Paint the drum into dst at (x, y), turned to position. */
+void tr_dial_draw(tr_dial d, double position, tr_surface dst, int x, int y);
+
 #endif
