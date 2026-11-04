@@ -8,7 +8,7 @@ import numpy as np
 
 from ..config import RED, GREEN, BLUE, YELLOW, MAGENTA, CYAN, ORANGE, WHITE, SPOTIFY
 from .registry import model
-from .shape import Shape, arc, boxes, extrude, relief
+from .shape import DENSITY, Shape, arc, boxes, extrude, relief
 
 
 @model("cube", GREEN)
@@ -67,6 +67,54 @@ def folder():
     return Shape.combine(relief(back, 0.09).transformed(t=(0, 0, 0.22)),
                          relief(page, 0.03).transformed(t=(0, 0, 0.05)),
                          relief(flap, 0.09).transformed(t=(0, 0, -0.14)))
+
+
+# The world on a rough 36 x 18 grid, north at the top and the date line at the edges: # is land.
+_WORLD = ("                                    ",
+          "                ######  ###         ",
+          "    ########    ###    #  ######### ",
+          "  ###########  ##     ############# ",
+          "   #########         ###############",
+          "     #######        ##############  ",
+          "      #####         ###############  ",
+          "       ###         ##############   ",
+          "        ##         ####### #### #   ",
+          "         ###       #######  ## #    ",
+          "          ####      ######     ##   ",
+          "          #####     #####     ###   ",
+          "          ####       ####    ####   ",
+          "          ###        ###      ###   ",
+          "          ##                     #  ",
+          "          #                         ",
+          "                                    ",
+          "      ###########################   ")
+
+
+@model("globe", BLUE)
+def globe(radius=1.25, lats=18, lons=36):
+    """Web: the world, turning. One flat face per patch of the sphere, each with its own normal, so the light
+    falls across it properly: green land and blue sea."""
+    faces = []
+    for j in range(lats):
+        for i in range(lons):
+            lat0, lat1 = math.pi * (0.5 - j / lats), math.pi * (0.5 - (j + 1) / lats)
+            lon0, lon1 = 2 * math.pi * i / lons, 2 * math.pi * (i + 1) / lons
+            mid_lat, mid_lon = (lat0 + lat1) / 2, (lon0 + lon1) / 2
+            width = abs(lon1 - lon0) * math.cos(mid_lat) * radius
+            nu = max(1, int(width * DENSITY * 1.2))
+            nv = max(1, int(abs(lat1 - lat0) * radius * DENSITY * 1.2))
+            pts = []
+            for v in range(nv):
+                for u in range(nu):
+                    lat = lat0 + (lat1 - lat0) * (v + 0.5) / nv
+                    lon = lon0 + (lon1 - lon0) * (u + 0.5) / nu
+                    pts.append((radius * math.cos(lat) * math.sin(lon), radius * math.sin(lat),
+                                -radius * math.cos(lat) * math.cos(lon)))
+            normal = (math.cos(mid_lat) * math.sin(mid_lon), math.sin(mid_lat), -math.cos(mid_lat) * math.cos(mid_lon))
+            row = _WORLD[j]
+            land = i < len(row) and row[i] == "#"
+            faces.append((pts, normal, GREEN if land else BLUE))
+    return Shape.from_faces(faces)
 
 
 @model("settings", CYAN)

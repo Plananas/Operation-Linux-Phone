@@ -6,6 +6,7 @@
 #include "trend/apps/calculator.h"
 #include "trend/apps/files.h"
 #include "trend/apps/music.h"
+#include "trend/apps/web.h"
 #include "trend/draw.h"
 #include "trend/expr.h"
 #include "trend/mesh.h"
@@ -927,6 +928,189 @@ static void test_files_render(void)
 	free(px);
 }
 
+/* ---- the Web app: everything it reads comes from a program that parses the internet ---- */
+
+static size_t put_frame(uint8_t *out, int kind, const void *payload, size_t n)
+{
+	out[0] = (uint8_t)kind;
+	out[1] = (uint8_t)n;
+	out[2] = (uint8_t)(n >> 8);
+	out[3] = (uint8_t)(n >> 16);
+	memcpy(out + 4, payload, n);
+	return n + 4;
+}
+
+static size_t put_row(uint8_t *out, int index, const void *bytes, size_t n)
+{
+	uint8_t p[300];
+	p[0] = (uint8_t)index;
+	p[1] = (uint8_t)(index >> 8);
+	memcpy(p + 2, bytes, n);
+	return put_frame(out, WEB_F_ROW, p, n + 2);
+}
+
+static tr_web_theme web_test_theme(tr_glyph *glyphs, const uint8_t *tiles)
+{
+	static const float pts[3] = { 0, 0, -1 }, nrm[3] = { 0, 0, -1 }, cen[3] = { 0, 0, -1 };
+	static const int32_t start[2] = { 0, 1 }, col[1] = { 0 };
+	const tr_mesh mesh = { pts, start, nrm, cen, col, 1 };
+	const tr_view small = { 21.0f, 0.66f, -4.5f, { -2.5f, 3.0f, -5.0f }, 16, 8, 13 };
+	const tr_view big = { 56.0f, 0.66f, -4.5f, { -2.5f, 3.0f, -5.0f }, 40, 22, 13 };
+	return (tr_web_theme){ glyphs, glyphs, glyphs, 0xff00ff00u, 0xff0000ffu, mesh, small, big, { tiles, 12, 8 } };
+}
+
+static void test_web(void)
+{
+	static tr_glyph glyphs[256];
+	static uint8_t mask[16 * 8];
+	static uint8_t frame[1 << 20];
+	memset(mask, 255, sizeof(mask));
+	for (int i = 0; i < 256; i++)
+		glyphs[i] = (tr_glyph){ mask, 8, 16, 0, 0, 10.0f };
+	const size_t tile_bytes = (size_t)(WEB_PALETTE * WEB_SHADES + 1) * 12 * 8 * 4;
+	uint8_t *tiles = calloc(1, tile_bytes);
+	uint32_t *px = calloc(480 * 734, 4);
+	const tr_surface dst = { (uint8_t *)px, 480 * 4, 480, 734 };
+	tr_web_status *st = calloc(1, tr_web_status_size());
+	tr_web *s = calloc(1, tr_web_size());
+	const tr_web_theme theme = web_test_theme(glyphs, tiles);
+	tr_web_init(s);
+	tr_web_status_init(st);
+	CHECK(tr_web_tab(s) == TR_WEB_CHAT);
+
+	/* An empty screen draws, and a touch on nothing does nothing. */
+	tr_web_advance(s, st, 1.0);
+	tr_web_render(s, st, &theme, 1.0, dst);
+	CHECK(tr_web_touch(s, s, st, TR_WEB_DOWN, 240, 400, 1.0).kind == TR_WEB_NONE);
+	CHECK(tr_web_touch(s, s, st, TR_WEB_UP, 240, 400, 1.0).kind == TR_WEB_NONE);
+
+	/* A link's cell gives its id, however the bytes were cut. */
+	static const uint8_t row[] = { 'a', 'b', ' ', WEB_C_LINK, 0x01, 0x02, 'l', 'i', 'n', 'k', WEB_C_END, ' ', 'z' };
+	size_t n = put_row(frame, 0, row, sizeof(row));
+	for (size_t i = 0; i < n; i++)
+		tr_web_feed(st, TR_WEB_PAGE, frame + i, 1);
+	tr_web_set_tab(s, TR_WEB_PAGE);
+	tr_web_advance(s, st, 2.0);
+	tr_web_touch(s, s, st, TR_WEB_DOWN, WEB_MARGIN + 5 * WEB_ADVANCE, 85, 2.0);
+	tr_web_cmd cmd = tr_web_touch(s, s, st, TR_WEB_UP, WEB_MARGIN + 5 * WEB_ADVANCE, 85, 2.0);
+	CHECK(cmd.kind == TR_WEB_LINK && cmd.arg == 0x0102);
+
+	/* The tabs and keys. */
+	tr_web_touch(s, s, st, TR_WEB_DOWN, 40, 20, 3.0);
+	CHECK(tr_web_touch(s, s, st, TR_WEB_UP, 40, 20, 3.0).kind == TR_WEB_NONE);
+	CHECK(tr_web_tab(s) == TR_WEB_CHAT);
+	tr_web_touch(s, s, st, TR_WEB_DOWN, 240, 700, 3.0);
+	CHECK(tr_web_touch(s, s, st, TR_WEB_UP, 240, 700, 3.0).kind == TR_WEB_INPUT);
+	tr_web_touch(s, s, st, TR_WEB_DOWN, 460, 20, 3.0);
+	CHECK(tr_web_touch(s, s, st, TR_WEB_UP, 460, 20, 3.0).kind == TR_WEB_NEW_CHAT);
+	tr_web_touch(s, s, st, TR_WEB_DOWN, 130, 20, 3.0);
+	tr_web_touch(s, s, st, TR_WEB_UP, 130, 20, 3.0);
+	CHECK(tr_web_tab(s) == TR_WEB_PAGE);
+	tr_web_touch(s, s, st, TR_WEB_DOWN, 300, 20, 3.0);
+	CHECK(tr_web_touch(s, s, st, TR_WEB_UP, 300, 20, 3.0).kind == TR_WEB_BACK);
+
+	/* Scrolling stops at the ends, and a scroll order is obeyed but kept in range. */
+	static const uint8_t art_or_text[] = { 'x' };
+	n = 0;
+	for (int i = 0; i < 500; i++)
+		n += put_row(frame + n, i, art_or_text, 1);
+	uint32_t where = 100000;
+	n += put_frame(frame + n, WEB_F_SCROLL, &where, 4);
+	tr_web_feed(st, TR_WEB_PAGE, frame, n);
+	const uint64_t key = tr_web_advance(s, st, 4.0);
+	CHECK(tr_web_scroll_of(s, TR_WEB_PAGE) == 500 * WEB_ROW_H - (668 - 78));
+	CHECK(tr_web_advance(s, st, 4.0) == key);
+	tr_web_render(s, st, &theme, 4.0, dst);
+
+	/* Hostile input: bad lengths and truncated controls, in every position, on the last rows and past them. */
+	static const uint8_t cut_link[] = { 'a', WEB_C_LINK };
+	static const uint8_t cut_link2[] = { WEB_C_FIELD, 0x00 };
+	static const uint8_t cut_field[] = { WEB_C_FIELD, 0, 1, 'x', 'y' };
+	static const uint8_t art_short[] = { WEB_ART_MARK, 200, 255 };
+	static uint8_t art_long[WEB_ROW_BYTES + 100];
+	memset(art_long, 250, sizeof(art_long));
+	art_long[0] = WEB_ART_MARK;
+	n = put_row(frame, 490, cut_link, sizeof(cut_link));
+	n += put_row(frame + n, 491, cut_link2, sizeof(cut_link2));
+	n += put_row(frame + n, 492, cut_field, sizeof(cut_field));
+	n += put_row(frame + n, 493, art_short, sizeof(art_short));
+	n += put_row(frame + n, 494, art_long, sizeof(art_long));
+	n += put_row(frame + n, 495, art_long + 1, sizeof(art_long) - 1);
+	n += put_row(frame + n, 60000, row, sizeof(row));
+	n += put_frame(frame + n, 99, row, sizeof(row));
+	n += put_frame(frame + n, WEB_F_ROW, row, 1);
+	n += put_frame(frame + n, WEB_F_ADDR, "", 0);
+	n += put_frame(frame + n, WEB_F_STATUS, "\xff", 1);
+	n += put_frame(frame + n, WEB_F_SCROLL, "ab", 2);
+	n += put_frame(frame + n, WEB_F_ROWS, "\xff\xff", 2);
+	tr_web_feed(st, TR_WEB_PAGE, frame, n);
+	tr_web_advance(s, st, 5.0);
+	tr_web_render(s, st, &theme, 5.0, dst);
+	for (int y = 80; y < 660; y += 11)
+		for (int x = 0; x < 480; x += 13) {
+			tr_web_touch(s, s, st, TR_WEB_DOWN, x, y, 5.0);
+			tr_web_touch(s, s, st, TR_WEB_UP, x, y, 5.0);
+		}
+
+	/* A frame too long to hold is dropped whole, and the next one still reads. */
+	memset(frame, 'x', sizeof(frame));
+	frame[0] = WEB_F_OPEN;
+	frame[1] = 0;
+	frame[2] = 0;
+	frame[3] = 8;
+	const size_t huge = 4 + (8u << 16);
+	tr_web_feed(st, TR_WEB_CHAT, frame, sizeof(frame) < huge ? sizeof(frame) : huge);
+	CHECK(tr_web_peek_open(st)[0] == '\0');
+	n = put_frame(frame, WEB_F_OPEN, "https://x/\n\x01", 12);
+	tr_web_feed(st, TR_WEB_PAGE, frame, n);
+	CHECK(!strcmp(tr_web_peek_open(st), "https://x/"));
+	tr_web_clear_open(st);
+	CHECK(tr_web_peek_open(st)[0] == '\0');
+
+	/* The address and status can't overrun however long they are. */
+	static uint8_t long_text[3000];
+	memset(long_text, 'a', sizeof(long_text));
+	long_text[0] = 1;
+	n = put_frame(frame, WEB_F_ADDR, long_text, 2000);
+	n += put_frame(frame + n, WEB_F_STATUS, long_text, 2000);
+	tr_web_feed(st, TR_WEB_PAGE, frame, n);
+	CHECK(strlen(tr_web_address(st)) < 128);
+	tr_web_advance(s, st, 6.0);
+	tr_web_render(s, st, &theme, 6.0, dst);
+
+	/* Typing draws too, at any length, including nothing. */
+	static char typed[1500];
+	memset(typed, 'k', sizeof(typed) - 1);
+	tr_web_set_compose(s, typed, "label");
+	tr_web_render(s, st, &theme, 6.0, dst);
+	tr_web_set_compose(s, "", "label");
+	tr_web_render(s, st, &theme, 6.0, dst);
+	tr_web_set_compose(s, NULL, NULL);
+
+	/* Going back to the chat, it follows the bottom until pulled up. */
+	n = 0;
+	for (int i = 0; i < 300; i++)
+		n += put_row(frame + n, i, art_or_text, 1);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_set_tab(s, TR_WEB_CHAT);
+	tr_web_advance(s, st, 7.0);
+	const int bottom = 300 * WEB_ROW_H - (668 - 144);
+	CHECK(tr_web_scroll_of(s, TR_WEB_CHAT) == bottom);
+	tr_web_touch(s, s, st, TR_WEB_DOWN, 240, 300, 7.0);
+	tr_web_touch(s, s, st, TR_WEB_MOVE, 240, 400, 7.2);
+	tr_web_touch(s, s, st, TR_WEB_UP, 240, 400, 7.6);
+	tr_web_advance(s, st, 8.0);
+	CHECK(tr_web_scroll_of(s, TR_WEB_CHAT) == bottom - 100);
+	n = put_row(frame, 300, art_or_text, 1);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 9.0);
+	CHECK(tr_web_scroll_of(s, TR_WEB_CHAT) == bottom - 100);
+	free(s);
+	free(st);
+	free(px);
+	free(tiles);
+}
+
 int main(void)
 {
 	test_rgb_to_rgbx();
@@ -953,6 +1137,7 @@ int main(void)
 	test_music_viz();
 	test_files_status();
 	test_files_render();
+	test_web();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

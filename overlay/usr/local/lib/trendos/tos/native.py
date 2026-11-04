@@ -5,6 +5,8 @@ numbers; they never see a pointer. Like the C underneath, these functions keep n
 reads its inputs and writes only to the output array it was given.
 """
 import ctypes
+import mmap
+import time
 from ctypes import Structure, c_char_p, c_double, c_float, c_int, c_size_t, c_uint, c_uint32, c_uint64, c_void_p
 
 import numpy as np
@@ -66,6 +68,15 @@ class CalcTheme(Structure):
                 ("accent", c_uint32), ("error", c_uint32)]
 
 
+class WebCmd(Structure):
+    _fields_ = [("kind", c_int), ("arg", c_int)]
+
+
+class WebTheme(Structure):
+    _fields_ = [("fonts", c_void_p * 3), ("accent", c_uint32), ("error", c_uint32), ("globe", Mesh),
+                ("small_view", View), ("big_view", View), ("atlas", Atlas)]
+
+
 class MusicCmd(Structure):
     _fields_ = [("kind", c_int), ("arg", c_int)]
 
@@ -110,6 +121,21 @@ _SIGNATURES = {
     "tr_files_touch":       (_i, [_vp, _vp, _vp, _i, _i, _i]),
     "tr_files_frame_key":   (c_uint64, [_vp, _vp, c_double]),
     "tr_files_render":      (None, [_vp, _vp, _vp, c_double, Surface]),
+    "tr_web_size":          (c_size_t, []),
+    "tr_web_status_size":   (c_size_t, []),
+    "tr_web_init":          (None, [_vp]),
+    "tr_web_status_init":   (None, [_vp]),
+    "tr_web_feed":          (None, [_vp, _i, c_char_p, c_size_t]),
+    "tr_web_peek_open":     (c_char_p, [_vp]),
+    "tr_web_clear_open":    (None, [_vp]),
+    "tr_web_address":       (c_char_p, [_vp]),
+    "tr_web_touch":         (WebCmd, [_vp, _vp, _vp, _i, _i, _i, c_double]),
+    "tr_web_tab":           (_i, [_vp]),
+    "tr_web_set_tab":       (None, [_vp, _i]),
+    "tr_web_scroll_of":     (_i, [_vp, _i]),
+    "tr_web_set_compose":   (None, [_vp, c_char_p, c_char_p]),
+    "tr_web_advance":       (c_uint64, [_vp, _vp, c_double]),
+    "tr_web_render":        (None, [_vp, _vp, _vp, c_double, Surface]),
     "tr_music_size":        (c_size_t, []),
     "tr_music_status_size": (c_size_t, []),
     "tr_music_library_size": (c_size_t, []),
@@ -334,6 +360,88 @@ def calc_render(state, theme, now, dst):
 
 def calc_expr(state):
     return _lib.tr_calc_expr(state).decode("latin-1")
+
+
+# ---- the Web app -------------------------------------------------------------------------------
+WEB_CHAT, WEB_PAGE = 0, 1                                       # trend/apps/web.h
+WEB_LINK, WEB_FIELD, WEB_INPUT, WEB_NEW_CHAT, WEB_STOP_CHAT, WEB_BACK, WEB_FORWARD, WEB_RELOAD, WEB_STOP_PAGE = range(1, 10)
+_WEB_F_STATUS = 5                                               # trend/apps/web_wire.h
+
+
+def web_new():
+    state = _aligned(_lib.tr_web_size())
+    _lib.tr_web_init(state)
+    return state
+
+
+def web_status_new():
+    """Two documents' worth of rows, about 2 MB. It comes straight from the kernel, so only the rows actually
+    used take up memory."""
+    memory = mmap.mmap(-1, _lib.tr_web_status_size())
+    status = (ctypes.c_char * len(memory)).from_buffer(memory)
+    _lib.tr_web_status_init(status)
+    return status
+
+
+def web_theme(tables, accent, error, globe, small, big, tiles_atlas):
+    """The fonts (sizes 16, 19, 25, in order), colours, the globe and its two sizes. tables and what the mesh and
+    atlas point at must outlive it."""
+    return WebTheme((c_void_p * 3)(*map(ctypes.addressof, tables)), colour(accent), colour(error), globe, small, big, tiles_atlas)
+
+
+def web_feed(status, which, data):
+    _lib.tr_web_feed(status, which, data, len(data))
+
+
+def web_feed_error(status, message):
+    """Show a message in the status line, as webd itself would."""
+    text = message.encode("latin-1")
+    frame = bytes([_WEB_F_STATUS, len(text) + 1, 0, 0, 0]) + text
+    for which in (WEB_CHAT, WEB_PAGE):
+        _lib.tr_web_feed(status, which, frame, len(frame))
+
+
+def web_take_open(status):
+    """A URL to open in the browser, or "". Once only."""
+    url = _lib.tr_web_peek_open(status)
+    if not url:
+        return ""
+    _lib.tr_web_clear_open(status)
+    return url.decode("latin-1")
+
+
+def web_address(status):
+    return _lib.tr_web_address(status).decode("latin-1")
+
+
+def web_touch(state, status, event, x, y):
+    """Apply a touch in app-area coordinates. Returns a command, with .kind and .arg."""
+    return _lib.tr_web_touch(state, state, status, TOUCH_EVENTS[event], x, y, time.monotonic())
+
+
+def web_tab(state):
+    return _lib.tr_web_tab(state)
+
+
+def web_set_tab(state, tab):
+    _lib.tr_web_set_tab(state, tab)
+
+
+def web_scroll_of(state, tab):
+    return _lib.tr_web_scroll_of(state, tab)
+
+
+def web_set_compose(state, text, label):
+    _lib.tr_web_set_compose(state, None if text is None else text.encode("latin-1", "replace"),
+                            None if label is None else label.encode("latin-1"))
+
+
+def web_advance(state, status, now):
+    return _lib.tr_web_advance(state, status, now)
+
+
+def web_render(state, status, theme, now, dst):
+    _lib.tr_web_render(state, status, ctypes.byref(theme), now, surface(dst))
 
 
 # ---- the Music app -----------------------------------------------------------------------------

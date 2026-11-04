@@ -20,3 +20,5 @@ firmware/trendos/boot-kernel-test.img
 native/filesd/filesd
 native/filesd/filesd-test
 native/filesd/test_http
+native/webd/webd
+native/webd/test_webd

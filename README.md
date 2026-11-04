@@ -63,6 +63,14 @@ title bar.
   Sharing is off until you start it, keeps going when you close the app or the screen turns off, and
   stops when you tap **stop sharing**, after 30 idle minutes, or on a restart. The PIN is new each time,
   and ten wrong guesses stop sharing. It uses plain HTTP, so only use it on a Wi-Fi network you trust.
+- **Web** (the turning globe) — an AI agent to talk to, with a small browser one tab behind it. It opens on
+  **chat**: tap the box at the bottom and type. The agent can search the web, read pages and open one for you, and
+  any link in its replies opens in the **web** tab when you tap it. Type an address like `example.com` instead and it
+  goes straight to the browser. Asking something from the web tab tells the agent which page you're on. Pages are
+  drawn in the terminal font and pictures become shaded ASCII, like the icons. `<` `>` `R` are back, forward and
+  reload; the Back key closes the app, as everywhere. There's no JavaScript, so Wikipedia and Hacker News work well
+  but sites built by scripts come up nearly empty; no cookies either, so nothing stays logged in. The chat needs an
+  API key (below) and lasts until a restart; **new** starts another. Each reply shows the tokens it used.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop
@@ -76,6 +84,19 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
   on the laptop once (shares internet but blocks the phone from the rest of your home network).
 - **Add/Change the Wi-Fi network:** easiest on the phone — Settings → Wi-Fi → tap a network → type
   the password. (Or over SSH: `ssh -t root@192.168.42.129 /usr/local/sbin/wifi-connect`.)
+
+## The chat's API key
+
+The Web app's chat uses Claude through Anthropic's API, which you pay for by use. Get a key at
+[console.anthropic.com](https://console.anthropic.com), then on the laptop run this, paste the key, press Enter, then Ctrl-D:
+
+```sh
+ssh root@192.168.42.129 'mkdir -p /etc/trendos && umask 077 && cat > /etc/trendos/anthropic-key && rc-service bootscreen restart'
+```
+
+The key stays in that root-only file and only ever goes to `api.anthropic.com`. To change which model it uses, set `WEB_MODEL` in
+`overlay/usr/local/lib/trendos/tos/config.py`. It starts on `claude-opus-5-5` ($4 in, $20 out per million tokens);
+`claude-haiku-5-5` ($0.10 in, $0.50 out) is far cheaper for everyday questions. Web pages the agent reads count as tokens too.
 
 ## Updating TREND OS
 
@@ -117,10 +138,11 @@ overlay/                   everything installed on the phone; mirrors the phone'
 native/                    all our C; rules and style in native/README.md
   libtrend/                the C core, built into libtrend.so on the phone by deploy.sh
     include/trend/, src/   pixels, draw, mesh, viz, expr
-    src/apps/<app>/        the apps written in C, one folder each: calculator/, music/, files/
+    src/apps/<app>/        the apps written in C, one folder each: calculator/, music/, files/, web/
     tests/                 unit tests: make test
   player/                  Music's playback: libtrendplay.so, built on the phone by deploy.sh
   filesd/                  the Files app's web server: its own unprivileged program, built on the phone by deploy.sh
+  webd/                    the Web app's browser engine and chat agent: its own unprivileged program, built on the phone by deploy.sh
   boot/                    bootanim, charger, fbpan: source + prebuilt static binaries for the ramdisk
 
 bootimg/                   putting a boot image together
@@ -176,16 +198,17 @@ Each layer only uses the ones above it.
 | **Foundations** | `config` (every constant), `native` (the only door into the C library) |
 | **`hw/`: the devices** | `fb` (screen), `inputdev` (touch and keys), `btchip` (Bluetooth/FM chip), `fm`, `bluetooth`, `audio`, `sshmon` |
 | **Drawing** | `gfx`, `canvas`, `render` (3D), `ui` (the shared look), `keyboard`, `models/` (the 3D icons) |
-| **`apps/`** | `base`, then one folder per app, with its class in `app.py`: `calculator/`, `radio/`, `music/`, `clock/`, `ssh/`, `wifi/`, `bluetooth/`, `spotify/` (shelved) |
+| **`apps/`** | `base`, then one folder per app, with its class in `app.py`: `calculator/`, `radio/`, `music/`, `clock/`, `ssh/`, `files/`, `web/`, `wifi/`, `bluetooth/`, `spotify/` (shelved) |
 | **The shell** | `shell` (main loop), `launcher`, `transition`, `flight`, `stats`, `title`, `power`, `boot` |
 
 ### Where to go for...
 
 | To change... | Look in |
 |---|---|
-| An app | `overlay/usr/local/lib/trendos/tos/apps/<app>/` (Calculator, Music and Files are really in `native/libtrend/src/apps/<app>/`) |
+| An app | `overlay/usr/local/lib/trendos/tos/apps/<app>/` (Calculator, Music, Files and Web are really in `native/libtrend/src/apps/<app>/`) |
 | Music playback | `native/player/` |
 | The Files web server | `native/filesd/`, and the page in `overlay/usr/local/share/trendos/files/` |
+| The browser engine or chat agent | `native/webd/` |
 | Anything that draws too slowly | `native/libtrend/` |
 | How the phone starts | `bootimg/ramdisk/init`, then `overlay/etc/init.d/` |
 | Boot animation or charging screen | `native/boot/`, then rebuild the boot image |
