@@ -8,13 +8,13 @@ import re, subprocess, threading, time
 
 import math
 
-from ..config import W, H, TOP, APP_H, ACCENT, GREY, DIM, TEXT, PALETTE, GREEN, DIMGREEN, CW, CH
-from ..gfx import canvas, font, to_rgbx
-from ..keyboard import Keyboard, KB_Y
-from ..models import boxes
-from ..render import card_tiles, draw_view, matrix
-from .. import ui
-from .base import App
+from ...config import W, H, TOP, APP_H, ACCENT, GREY, DIM, TEXT, PALETTE, GREEN, DIMGREEN, CW, CH
+from ...gfx import canvas, font, to_rgbx
+from ...keyboard import Keyboard, KB_Y
+from ...models import boxes
+from ...render import card_tiles, draw_view, matrix
+from ... import ui
+from ..base import App
 
 STATUS_EVERY, SCAN_EVERY = 2.0, 15.0
 ROW_Y0, ROW_H = TOP + 196, 42          # network list rows (screen coords)
@@ -53,7 +53,7 @@ def bars_shape(level):
             parts.append(boxes(lit, colour_by_axis=(GREEN, GREEN, GREEN)))
         if dim:
             parts.append(boxes(dim, colour_by_axis=(DIMGREEN, DIMGREEN, DIMGREEN)))
-        from ..models import Shape
+        from ...models import Shape
         _bar_shapes[q] = parts[0] if len(parts) == 1 else Shape.combine(*parts)
     return _bar_shapes[q]
 

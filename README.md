@@ -33,6 +33,13 @@ title bar.
   **Bluetooth** is next to it: switch it on/off, tap **scan**, then tap your headphones or speaker
   under *nearby* to pair and connect (put them in pairing mode first). Others see the phone as
   "TREND OS".
+- **Music** (the two notes) — plays MP3, FLAC, Ogg, Opus and WAV files from `/data/music` on the phone
+  (subfolders are fine). Copy them over USB: `scp song.mp3 root@192.168.42.129:/data/music/`, then
+  reopen the app. Tap a track to play it; drag the bar to seek; the **volume keys** set the volume
+  while the app is open. Music keeps playing when you close the app or the screen turns off, and
+  moves on through the list until it runs out. It plays through Bluetooth if connected, otherwise
+  wired headphones, otherwise the speaker. Losing headphones or Bluetooth pauses it, and an alarm or
+  the Radio pauses it too.
 - **Clock** (the clock face) — big glowing time, date, and up to 4 alarms. Tap **+ new alarm**
   or an alarm to set the time and the days it repeats (no days = rings once). Alarms ring
   through the speaker even with the screen off or another app open; volume key = snooze 5 min.
@@ -93,15 +100,17 @@ overlay/                   everything installed on the phone; mirrors the phone'
   etc/conf.d/, etc/local.d/, etc/timezone    hardware clock, boot log, UK time
   usr/local/bin/           trendos.py (shell entry point), mksound.py, mkcharger.py (startup sound, charger assets)
   usr/local/sbin/          helpers: wifi-up, wifi-connect, wifi-autostart, bt-up, fmctl, audio-speaker,
-                           play-startup-sound, screen-on, ntp-synced
+                           audio-headphones, play-startup-sound, screen-on, ntp-synced
   usr/local/share/trendos/fonts/    VT323
   var/lib/go-librespot/    Spotify engine config (shelved)
   usr/local/lib/trendos/tos/    the home screen and apps, in Python (map below)
 
 native/                    all our C; rules and style in native/README.md
   libtrend/                the C core, built into libtrend.so on the phone by deploy.sh
-    include/trend/, src/   pixels, draw, mesh, viz, expr, and apps/ (Calculator)
+    include/trend/, src/   pixels, draw, mesh, viz, expr
+    src/apps/<app>/        the apps written in C, one folder each: calculator/, music/
     tests/                 unit tests: make test
+  player/                  Music's playback: libtrendplay.so, built on the phone by deploy.sh
   boot/                    bootanim, charger, fbpan: source + prebuilt static binaries for the ramdisk
 
 bootimg/                   putting a boot image together
@@ -119,12 +128,16 @@ kernel/                    our Linux kernel: Samsung's source plus these
 tools/                     things you run on the laptop
   deploy.sh                push updates to the phone
   pc-share-internet.sh     share the laptop's internet with the phone
-  phone/                   copied to the phone to test it: bench.py (speed), drive.py (walks the UI), shot.py (screenshot)
+  phone/                   copied to the phone to test it: bench.py (speed), drive.py (walks the UI), shot.py (screenshot),
+                           mkjungle.py, mkchime.py (make test sounds for Music)
   bootloader/              emergency-mode (BootROM) tools, paused: bootrom_hello.py, bootrom-read.sh, spd_dump patch
     logo/                  attempts at replacing the Samsung logo. mklogo.py needs cube.py, which no longer exists
   android/                 for rooted Android and the old chroot setup: rootshell.sh, alpine-boot.sh
   spotify/                 shelved Spotify engine build (Spotify blocks playback for this kind of client)
   ext/ *                   third-party clones: kernel, kout (kernel build output), chipram, spreadtrum_flash, fdl-sc8830
+
+assets/music/              our own sounds for the Music app: Polygon Jungle.flac, Chime.wav
+                           (made by tools/phone/mkjungle.py, mkchime.py); copy to /data/music to play
 
 firmware/
   stock/                   Samsung's boot.img and recovery.img, plus the full firmware zip *
@@ -153,14 +166,15 @@ Each layer only uses the ones above it.
 | **Foundations** | `config` (every constant), `native` (the only door into the C library) |
 | **`hw/`: the devices** | `fb` (screen), `inputdev` (touch and keys), `btchip` (Bluetooth/FM chip), `fm`, `bluetooth`, `audio`, `sshmon` |
 | **Drawing** | `gfx`, `canvas`, `render` (3D), `ui` (the shared look), `keyboard`, `models/` (the 3D icons) |
-| **`apps/`** | `base`, `calculator`, `radio`, `clock`, `ssh`, `wifi`, `bluetooth`, `spotify` (shelved) |
+| **`apps/`** | `base`, then one folder per app, with its class in `app.py`: `calculator/`, `radio/`, `music/`, `clock/`, `ssh/`, `wifi/`, `bluetooth/`, `spotify/` (shelved) |
 | **The shell** | `shell` (main loop), `launcher`, `transition`, `flight`, `stats`, `title`, `power`, `boot` |
 
 ### Where to go for...
 
 | To change... | Look in |
 |---|---|
-| An app | `overlay/usr/local/lib/trendos/tos/apps/` (Calculator's real code: `native/libtrend/src/apps/`) |
+| An app | `overlay/usr/local/lib/trendos/tos/apps/<app>/` (Calculator and Music are really in `native/libtrend/src/apps/<app>/`) |
+| Music playback | `native/player/` |
 | Anything that draws too slowly | `native/libtrend/` |
 | How the phone starts | `bootimg/ramdisk/init`, then `overlay/etc/init.d/` |
 | Boot animation or charging screen | `native/boot/`, then rebuild the boot image |

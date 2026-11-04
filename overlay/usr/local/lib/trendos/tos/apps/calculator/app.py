@@ -1,15 +1,15 @@
 """Calculator: + - x / and brackets, live preview, history.
 
-The app itself is C: native/libtrend/src/apps/calculator.c (behaviour) and calculator_view.c
+The app itself is C: native/libtrend/src/apps/calculator/calculator.c (behaviour) and calculator_view.c
 (drawing). This class connects it to the shell and hands it the fonts, which PIL rasterises once.
 """
 import time
 
 import numpy as np
 
-from .. import canvas, native
-from ..config import ACCENT, APP_H, PALETTE, RED, SHADES, TOP, W
-from .base import App
+from ... import canvas, native
+from ...config import ACCENT, APP_H, PALETTE, RED, SHADES, TOP, W
+from ..base import App
 
 MINUS_SLOT, ELLIPSIS_SLOT = 0x96, 0x85          # native/libtrend/include/trend/apps/calculator.h
 DISPLAY_CHARS = "0123456789.+-*/=()> Erorinfae" + SHADES + "÷×"

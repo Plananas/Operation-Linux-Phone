@@ -7,7 +7,7 @@ Foundations:
 Packages:
   hw/         the devices: framebuffer, input, Bluetooth/FM chip, audio, SSH monitor
   models/     3D model library: Shape, boxes/extrude building blocks, the launcher icons by name
-  apps/       App base class and the apps
+  apps/       App base class, and one folder per app
 
 Drawing:
   gfx         cached fonts, text strips, RGBX conversion, clipped copies

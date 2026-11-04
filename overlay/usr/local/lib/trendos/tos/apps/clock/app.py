@@ -20,13 +20,14 @@ import json, math, os, subprocess, threading, time, wave
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-from ..config import W, TOP, APP_H, ACCENT, CW, CH
-from ..gfx import font, to_rgbx, text_len, draw_text
-from ..models import Shape
-from ..models.icons import CLOCK_HANDS, _hand, clock_face, hand_angles
-from ..render import TILES, card_tiles, draw_view, matrix
-from ..ui import BG, PANEL, SCAN, DIM, MID, GHOST, FLARE, ERR, Keys, card, mix
-from .base import App
+from ...config import W, TOP, APP_H, ACCENT, CW, CH
+from ...gfx import font, to_rgbx, text_len, draw_text
+from ...hw import audio
+from ...models import Shape
+from ...models.icons import CLOCK_HANDS, _hand, clock_face, hand_angles
+from ...render import TILES, card_tiles, draw_view, matrix
+from ...ui import BG, PANEL, SCAN, DIM, MID, GHOST, FLARE, ERR, Keys, card, mix
+from ..base import App
 
 ALARMS_FILE = "/var/lib/trendos/alarms.json"
 SYNC_FILE = "/tmp/ntp-last-sync"              # written by /usr/local/sbin/ntp-synced
@@ -275,6 +276,7 @@ class ClockApp(App):
         try:
             if not (os.path.exists(TONE_RAMP) and os.path.exists(TONE_LOOP)):
                 _make_tones()
+            audio.take_output()
             subprocess.run(["/usr/local/sbin/audio-speaker"], stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL)
         except Exception:
@@ -372,7 +374,7 @@ class ClockApp(App):
                 self._snooze()
         elif self.mode == "edit":
             e = self.edit
-            if kid.startswith("d"):
+            if kid[0] == "d" and kid[1:].isdigit():    # d0..d6, and not "delete"
                 d = int(kid[1:])
                 e["days"] = sorted(set(e["days"]) ^ {d})
             elif kid == "save":

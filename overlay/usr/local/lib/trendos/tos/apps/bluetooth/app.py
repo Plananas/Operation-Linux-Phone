@@ -15,13 +15,13 @@ import math, time
 
 from PIL import Image, ImageDraw
 
-from ..config import W, TOP, APP_H, ACCENT, CW, CH
-from ..gfx import to_rgbx, text_len, draw_text
-from ..hw.bluetooth import BtCtl, SCAN_TIME
-from ..models import get as get_model
-from ..render import card_tiles, draw_view, matrix
-from ..ui import BG, PANEL, SCAN, DIM, MID, ERR, Keys, card
-from .base import App
+from ...config import W, TOP, APP_H, ACCENT, CW, CH
+from ...gfx import to_rgbx, text_len, draw_text
+from ...hw.bluetooth import BtCtl, SCAN_TIME
+from ...models import get as get_model
+from ...render import card_tiles, draw_view, matrix
+from ...ui import BG, PANEL, SCAN, DIM, MID, ERR, Keys, card
+from ..base import App
 
 STATUS = (14, 12, W - 14, 150)
 MINE = (14, 238, W - 14, 482)

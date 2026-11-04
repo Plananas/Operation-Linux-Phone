@@ -18,9 +18,9 @@ import urllib.error, urllib.request
 import numpy as np
 from PIL import Image, ImageDraw
 
-from ..config import W, TOP, APP_H, ACCENT, GREY, DIM, TEXT, PALETTE, SPOTIFY
-from ..gfx import canvas, centre_text, font, to_rgbx
-from .base import App
+from ...config import W, TOP, APP_H, ACCENT, GREY, DIM, TEXT, PALETTE, SPOTIFY
+from ...gfx import canvas, centre_text, font, to_rgbx
+from ..base import App
 
 API = "http://127.0.0.1:3678"
 POLL_EVERY = 1.0                       # s between status polls while the app is on screen

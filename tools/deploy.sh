@@ -15,6 +15,7 @@ echo "== copying files to $HOST"
 tar -C "$O" --owner=0 --group=0 --exclude=__pycache__ -cf - $FILES | ssh "$HOST" 'tar -C / -xf -'
 ssh "$HOST" 'rm -rf /tmp/libtrend-src && mkdir /tmp/libtrend-src'
 tar -C native/libtrend --exclude=libtrend.so --exclude=test_libtrend -cf - include src | ssh "$HOST" 'tar -C /tmp/libtrend-src -xf -'
+tar -C native --exclude=libtrendplay.so --exclude=test_player -cf - player | ssh "$HOST" 'tar -C /tmp/libtrend-src -xf -'
 # Spotify player engine (built by tools/spotify/build-go-librespot.sh, not in git): with SPOTIFY=1, copy if changed
 GLR=tools/spotify/go-librespot
 if [ "${SPOTIFY:-0}" = 1 ] && [ -f "$GLR" ] && [ "$(ssh "$HOST" 'md5sum < /usr/local/bin/go-librespot 2>/dev/null')" != "$(md5sum < "$GLR")" ]; then
@@ -25,12 +26,16 @@ fi
 echo "== building libtrend.so, restarting the shell"
 ssh "$HOST" "SPOTIFY=${SPOTIFY:-0}; "'set -e
 cd /tmp/libtrend-src
-gcc -std=gnu11 -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/libtrend.so src/*.c src/apps/*.c -lm
+gcc -std=gnu11 -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/libtrend.so src/*.c src/apps/*/*.c -lm
+# The music player is optional: without it the Music app says so, and everything else works.
+apk info -e alsa-lib-dev libsndfile-dev >/dev/null || apk add -q alsa-lib-dev libsndfile-dev || echo "== no internet for the player'"'"'s packages"
+gcc -std=gnu11 -O2 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -Iplayer -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/libtrendplay.so player/player.c src/apps/music/music_text.c -lsndfile -lasound -lpthread -lm || echo "== libtrendplay not built: Music will say so"
 cd /
 rm -rf /tmp/libtrend-src /usr/local/lib/trendos/librender.so
 find /usr/local/lib/trendos -name __pycache__ -type d -exec rm -rf {} +
 rm -f /usr/local/bin/cube.py
 (cd /usr/local/lib/trendos/tos && rm -f fb.py inputdev.py fm.py btchip.py audio.py bluetooth.py sshmon.py)   # moved to tos/hw/
+(cd /usr/local/lib/trendos/tos/apps && rm -f calculator.py radio.py clock.py ssh.py wifi.py bluetooth.py spotify.py)   # each app has its own folder now
 rc-service bootscreen restart >/dev/null
 if [ "$SPOTIFY" = 1 ] && [ -x /usr/local/bin/go-librespot ]; then
 	apk info -e alsa-lib flac-libs mpg123-libs libvorbis libogg >/dev/null || apk add -q alsa-lib flac-libs mpg123-libs libvorbis libogg

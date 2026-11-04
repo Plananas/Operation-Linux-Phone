@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "trend/apps/calculator.h"
+#include "trend/apps/music.h"
 #include "trend/draw.h"
 #include "trend/expr.h"
 #include "trend/mesh.h"
@@ -497,6 +498,198 @@ static void test_calc_render(void)
 	free(s);
 }
 
+static void test_music_text(void)
+{
+	char out[32];
+	tr_music_display_name("/data/music/Some_Band/01_song.mp3", out, sizeof(out));
+	CHECK(strcmp(out, "01 song") == 0);
+	tr_music_display_name("no-extension", out, sizeof(out));
+	CHECK(strcmp(out, "no-extension") == 0);
+	tr_music_display_name(".hidden", out, sizeof(out));
+	CHECK(strcmp(out, ".hidden") == 0);
+
+	tr_music_latin1("caf\xc3\xa9", out, sizeof(out));                 /* in Latin-1 */
+	CHECK(strcmp(out, "caf\xe9") == 0);
+	tr_music_latin1("\xe2\x80\x99" "a\xe2\x80\x93" "b", out, sizeof(out));   /* punctuation */
+	CHECK(strcmp(out, "'a-b") == 0);
+	tr_music_latin1("\xe6\x97\xa5\xf0\x9f\x8e\xb5", out, sizeof(out));       /* outside it */
+	CHECK(strcmp(out, "??") == 0);
+	tr_music_latin1("old \xe9 tag", out, sizeof(out));                 /* not valid UTF-8 */
+	CHECK(strcmp(out, "old \xe9 tag") == 0);
+	tr_music_latin1("\xc3", out, sizeof(out));                         /* cut off at the end */
+	CHECK(strcmp(out, "\xc3") == 0);
+	tr_music_latin1("a\nb", out, sizeof(out));
+	CHECK(strcmp(out, "a?b") == 0);
+
+	char small[4];
+	tr_music_latin1("abcdefgh", small, sizeof(small));
+	CHECK(strcmp(small, "abc") == 0);
+}
+
+static tr_music_status music_status(int n_tracks)
+{
+	tr_music_status st;
+	tr_music_status_init(&st, NULL);
+	st.n_tracks = n_tracks;
+	return st;
+}
+
+static tr_music_cmd music_tap(tr_music *s, const tr_music_status *st, int x, int y)
+{
+	tr_music_touch(s, s, st, TR_MUSIC_DOWN, x, y);
+	return tr_music_touch(s, s, st, TR_MUSIC_UP, x, y);
+}
+
+static void test_music_touch(void)
+{
+	enum { KEY_Y = 290, ROW0 = 380, ROW_H = 44, BAR_Y = 203 };
+	tr_music *s = malloc(tr_music_size());
+	tr_music_init(s);
+	tr_music_status st = music_status(20);
+	tr_music_cmd c;
+
+	CHECK(music_tap(s, &st, 90, KEY_Y).kind == TR_CMD_PREV);
+	CHECK(music_tap(s, &st, 240, KEY_Y).kind == TR_CMD_TOGGLE);
+	CHECK(music_tap(s, &st, 380, KEY_Y).kind == TR_CMD_NEXT);
+	CHECK(music_tap(s, &st, 168, KEY_Y).kind == TR_CMD_NONE);     /* the gap between keys */
+	CHECK(music_tap(s, &st, 5, 5).kind == TR_CMD_NONE);
+
+	/* Sliding off a key cancels it. */
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 240, KEY_Y);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 240, 100);
+	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 240, 100).kind == TR_CMD_NONE);
+
+	/* A tap on a row plays it. */
+	c = music_tap(s, &st, 200, ROW0 + 2 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
+
+	/* Past the end of a short list, nothing. */
+	const tr_music_status few = music_status(2);
+	CHECK(music_tap(s, &few, 200, ROW0 + 5 * ROW_H).kind == TR_CMD_NONE);
+
+	/* A small wobble is still a tap. Dragging scrolls instead, and plays nothing. */
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0 + 100);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 104);
+	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 104).kind == TR_CMD_PLAY_TRACK);
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0 + 300);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 300 - 2 * ROW_H);
+	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 300 - 2 * ROW_H).kind == TR_CMD_NONE);
+	c = music_tap(s, &st, 200, ROW0);                               /* the list has moved 2 rows */
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
+
+	/* It can't scroll past either end. */
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 2000);
+	tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 2000);
+	c = music_tap(s, &st, 200, ROW0);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 0);
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 - 5000);
+	tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 - 5000);
+	c = music_tap(s, &st, 200, ROW0 + 7 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 19);
+
+	/* Seeking: only with a known length, dragged anywhere, clamped to the bar. */
+	CHECK(music_tap(s, &st, 240, BAR_Y).kind == TR_CMD_NONE);
+	st.duration = 100.0;
+	c = music_tap(s, &st, 240, BAR_Y);
+	CHECK(c.kind == TR_CMD_SEEK && c.arg == 500);
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 240, BAR_Y);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 9999, 700);
+	c = tr_music_touch(s, s, &st, TR_MUSIC_UP, 9999, 700);
+	CHECK(c.kind == TR_CMD_SEEK && c.arg == 1000);
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 240, BAR_Y);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, -50, BAR_Y);
+	c = tr_music_touch(s, s, &st, TR_MUSIC_UP, -50, BAR_Y);
+	CHECK(c.kind == TR_CMD_SEEK && c.arg == 0);
+
+	/* Volume keys act when pressed. Other keys aren't ours. */
+	c = tr_music_on_key(115, 1);
+	CHECK(c.kind == TR_CMD_VOLUME && c.arg == 1);
+	c = tr_music_on_key(114, 1);
+	CHECK(c.kind == TR_CMD_VOLUME && c.arg == -1);
+	c = tr_music_on_key(115, 0);
+	CHECK(c.kind == TR_CMD_NONE && c.arg == 1);
+	c = tr_music_on_key(30, 1);
+	CHECK(c.kind == TR_CMD_NONE && c.arg == 0);
+	free(s);
+}
+
+static void test_music_follow_and_key(void)
+{
+	tr_music *s = malloc(tr_music_size());
+	tr_music_init(s);
+	tr_music_status st = music_status(20);
+
+	/* The track moving off screen brings it back. */
+	st.track = 15;
+	tr_music_follow(s, s, &st);
+	tr_music_cmd c = music_tap(s, &st, 200, 366 + 7 * 44 + 2);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 15);
+
+	/* Stable while not playing, whatever the time. */
+	const uint64_t k = tr_music_frame_key(s, &st, 1.0);
+	CHECK(tr_music_frame_key(s, &st, 500.0) == k);
+	st.volume = 3;
+	CHECK(tr_music_frame_key(s, &st, 1.0) != k);
+
+	/* Playing moves it, about 20 times a second. */
+	st.state = TR_PLAYER_PLAYING;
+	CHECK(tr_music_frame_key(s, &st, 1.0) != tr_music_frame_key(s, &st, 1.1));
+	CHECK(tr_music_frame_key(s, &st, 1.001) == tr_music_frame_key(s, &st, 1.002));
+	free(s);
+}
+
+/* The sanitizers do most of the checking here. */
+static void test_music_render(void)
+{
+	static tr_glyph font[256];
+	static const uint8_t ink[64] = { 255, 200, 100, 50 };
+	for (int i = 0; i < 256; i++)
+		font[i] = (tr_glyph){ ink, 8, 8, 0, -2, 9.5f };
+	const tr_music_theme theme = { font, font, font, font, RED, BLUE };
+	enum { W = 480, H = 734 };
+	static uint32_t px[H * W];
+	static tr_music_library lib;
+	const tr_surface dst = { (uint8_t *)px, W * 4, W, H };
+	tr_music *s = malloc(tr_music_size());
+	tr_music_init(s);
+
+	/* Empty, then full of the longest names, with every track in turn playing. */
+	tr_music_status st = music_status(0);
+	tr_music_render(s, &st, &lib, &theme, dst);
+	lib.n = TR_MUSIC_MAX_TRACKS;
+	st.n_tracks = lib.n;
+	for (int i = 0; i < lib.n; i++) {
+		memset(lib.names[i], 'x', TR_MUSIC_NAME - 1);
+		lib.names[i][TR_MUSIC_NAME - 1] = '\0';
+	}
+	memset(st.title, 'y', TR_MUSIC_NAME - 1);
+	memset(st.error, 'z', TR_MUSIC_NAME - 1);
+	st.state = TR_PLAYER_PLAYING;
+	st.duration = 100000.0;
+	for (int i = 0; i < TR_MUSIC_SCOPE; i++)
+		st.scope[i] = i % 2 ? 32767 : -32768;           /* full scale stays inside the scope */
+	for (st.track = 0; st.track < lib.n; st.track += 37) {
+		st.position = st.track * 300.0;                 /* past the end, too */
+		tr_music_follow(s, s, &st);
+		tr_music_render(s, &st, &lib, &theme, dst);
+	}
+
+	/* The key being held and the playing track both show. */
+	st.track = 0;
+	tr_music_follow(s, s, &st);
+	tr_music_render(s, &st, &lib, &theme, dst);
+	const uint32_t idle_key = at(dst, 40, 260);
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 40, 260);
+	tr_music_render(s, &st, &lib, &theme, dst);
+	CHECK(at(dst, 40, 260) != idle_key);
+	tr_music_touch(s, s, &st, TR_MUSIC_UP, 40, 500);
+	CHECK(at(dst, 20, 380) == RED);                         /* the marker on the current row */
+	CHECK(at(dst, 0, 0) == 0xff000000u);
+	free(s);
+}
+
 int main(void)
 {
 	test_rgb_to_rgbx();
@@ -516,6 +709,10 @@ int main(void)
 	test_expr();
 	test_calc_state();
 	test_calc_render();
+	test_music_text();
+	test_music_touch();
+	test_music_follow_and_key();
+	test_music_render();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

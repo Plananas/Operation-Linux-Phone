@@ -13,6 +13,8 @@ BRIGHTNESS = 160                   # never write 0: the driver then disables the
 
 # ---- paths ---------------------------------------------------------------------------
 LIBTREND = os.environ.get("TREND_LIBTREND", "/usr/local/lib/trendos/libtrend.so")
+LIBTRENDPLAY = "/usr/local/lib/trendos/libtrendplay.so"
+MUSIC_DIR = "/data/music"
 SOUND = "/usr/local/share/trendos/startup.wav"
 SOUND_PLAYED = "/run/trendos-sound-played"         # play once per boot, not on respawn
 BOOTANIM_PID = "/dev/.bootanim.pid"                 # written by the ramdisk's bootanim

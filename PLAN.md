@@ -11,7 +11,7 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, **KERNEL p20** (boot img), system p2
 - OpenRC default runlevel: `usbnet sshd bootscreen wifi timesync dbus btuart bluetooth btaudio local`. Shell = `bootscreen` service (supervise-daemon) → `/usr/local/bin/trendos.py` → package `/usr/local/lib/trendos/tos` + `libtrend.so`.
 - Storage: `userdata` (p26) holds only `alpine/` (TREND OS root) + `native-init.log` (Android's files deleted 2026-11-03, ~2 GB free). Android's `system` (p24) still intact but unused (Wi-Fi fw + FM patch already copied to `/data/wifi`, `/data/bt`).
 - Network: **Wi-Fi** (default route, auto-connects) + **USB RNDIS** (phone 192.168.42.129, laptop .1, NM conn `phone-usb`, metric 100 backup). SSH key-only, root.
-- Apps: home carousel = welcome cube, Calculator, Radio, Clock, SSH, Settings → [Wi-Fi, Bluetooth]. Spotify shelved (§7).
+- Apps: home carousel = welcome cube, Calculator, Radio, Music, Clock, SSH, Settings → [Wi-Fi, Bluetooth]. Spotify shelved (§7).
 - Time: timezone Europe/London (`tzdata`, `/etc/localtime`). OpenRC **`timesync`** = busybox ntpd as root (Alpine's `ntpd` service can't work: it relies on ambient capabilities, not in 3.10); `-S ntp-synced` writes `/tmp/ntp-last-sync`; RTC saved at shutdown (`conf.d/hwclock` clock_systohc).
 
 ## 3. Gotchas (read before touching)
@@ -34,7 +34,7 @@ Repo layout: see *What's in this folder* in `README.md`. `overlay/` mirrors the 
 | `config.py` | all constants: `W=480 H=800 TOP=66 APP_H`, `PALETTE` + colour indices (`RED GREEN … CYAN ORANGE WHITE`), `ACCENT`, `SHADES`, timings |
 | `shell.py` | main loop; modes launcher/app/transition/power/halt/asleep; region cache per page keyed by `app.key()` |
 | `launcher.py` | `Entry(model, app=None, opens=None, name=None, phase=…)`; `default_entries()`, `settings_entries()` |
-| `apps/` | `base.App`, `calculator.py` (thin wrapper: the app is C, in `native/libtrend/src/apps/`), `wifi.py` (threads + keyboard example), `radio.py` (hardware worker thread, live 30 fps numpy drawing), `clock.py` (7-segment glow digits, alarms via `background()`), `ssh.py` (SSH live viewer, data from `tos/hw/sshmon.py`: /proc/net/tcp, sshd processes, /var/log/messages; view only), `spotify.py` (shelved) |
+| `apps/` | `base.App`, then one folder per app: `<app>/app.py` holds the class, `<app>/__init__.py` exports it. `calculator/` and `music/` (thin wrappers: the apps are C, in `native/libtrend/src/apps/<app>/`, §7 Music), `wifi/` (threads + keyboard example), `radio/` (hardware worker thread, live 30 fps numpy drawing), `clock/` (7-segment glow digits, alarms via `background()`), `ssh/` (SSH live viewer, data from `tos/hw/sshmon.py`: /proc/net/tcp, sshd processes, /var/log/messages; view only), `spotify/` (shelved) |
 | `render.py` 3D for apps | `draw_view(buf, shape, m9, K, cols, rows, x, y, tiles)` draws a Shape into any cell viewport (K ≈ cols×1.5 fills it); `card_tiles(y, PANEL, SCAN, card_y0)` = ASCII tiles on a card's background; `MINI` 5×7 tiles; `matrix(tilt, a, b, c)` pose. Shapes: `Shape.combine`, `.transformed(R, t)`; for moving parts update `shape.pts/fnrm/fcen` in place (see `Clock3D`). Palette adds `DIMGREEN`. Shell draws each app's launcher icon as a spinning badge in its title bar (`App.icon_shape`, set by `Entry`); `tos/flight.py` flies it between the carousel and the badge on every app open/close (cell-size ladder 8×12→5×7, object cut out of the launcher snapshot, badge left out of the sliding app frame) — automatic for any app opened from a carousel. |
 | `native.py` | the Python/C boundary: wraps libtrend (`slide`, `scale`, `blend`, `mesh_draw`, `scope_frame`, `terrain_draw`...); numpy arrays in, no pointers out |
 | `canvas.py` | fast 2D straight into RGBX arrays via libtrend: `blank`, `fill_rect`, `stroke_rect`, `fill_round_rect`, `fill_stripes`, `text`, `text_width`, `text_strip`. Use for anything redrawn often. Rectangles are half-open and PIL's are inclusive |
@@ -48,16 +48,16 @@ Repo layout: see *What's in this folder* in `README.md`. `overlay/` mirrors the 
 | `gfx.py` | `font`, `text_strip`, `canvas`, `to_rgbx`, `blit`; glyph cache `draw_text(im,x,y,s,size,col)` / `text_len` (use for big or often-redrawn text) |
 | `hw/fb.py` `hw/inputdev.py` `transition.py` `power.py` `stats.py` `title.py` `boot.py` | framebuffer · evdev · Slide anim · power menu · stats panel · typewriter title · boot handover/sound |
 
-**C** lives in `native/` (rules and style: `native/README.md`): `native/libtrend/` → `libtrend.so` (built on phone by deploy; `pixels` `draw` `mesh` `viz` `expr` and `apps/`) · `native/boot/` (`bootanim.c`, `fbpan.c`, `charger.c`, `*.armv7-static`). `tos/native.py` is the only Python file allowed to import ctypes.
+**C** lives in `native/` (rules and style: `native/README.md`): `native/libtrend/` → `libtrend.so` (built on phone by deploy; `pixels` `draw` `mesh` `viz` `expr` and `apps/<app>/`) · `native/player/` → `libtrendplay.so` (§7 Music) · `native/boot/` (`bootanim.c`, `fbpan.c`, `charger.c`, `*.armv7-static`). `tos/native.py` is the only Python file allowed to import ctypes.
 Other: `/etc/init.d/{bootscreen,usbnet,wifi}` · `/usr/local/sbin/*` helpers · ramdisk init in `bootimg/ramdisk/`.
 
 ## 5. Adding an app (recipe)
-1. **App** — `tos/apps/myapp.py`:
+1. **App** — `tos/apps/myapp/app.py`, plus `tos/apps/myapp/__init__.py` with `from .app import MyApp`:
    ```python
    from PIL import Image, ImageDraw
-   from ..config import W, APP_H, ACCENT
-   from ..gfx import font, to_rgbx
-   from .base import App
+   from ...config import W, APP_H, ACCENT
+   from ...gfx import font, to_rgbx
+   from ..base import App
    class MyApp(App):
        name = "My App"                       # title bar + launcher label
        def on_open(self): ...                # optional: start hardware/threads (on_close stops them)
@@ -84,7 +84,7 @@ New OpenRC service: add `etc/init.d/X` to the overlay **and** to `FILES` in `too
   `python3 bootimg/mkramdisk.py bootimg/ramdisk busybox.static rd.gz logo.rgbx=… bin/fbpan=… bin/bootanim=… bootanim.bin=… bin/charger=… charger.bin=…` →
   `python3 bootimg/repack_keep_dt.py firmware/stock/boot.img rd.gz firmware/trendos/boot-nativeN.img`. Flash: `dd of=/dev/mmcblk0p20 conv=fsync` on phone, verify sha256, reboot (fallback `heimdall flash --KERNEL img` in Download mode).
 - **Rescue**: init falls back to RNDIS + `telnet 192.168.42.129` if Alpine fails or `/data/alpine/.native-disable` exists. BootROM: battery out, hold Vol-Up, plug USB → `1782:4d00` (`tools/bootloader/bootrom_hello.py`; flashing needs FDL1/FDL2, not obtained).
-- **Phone tools**: `tools/phone/`: `bench.py` (frame costs + live shell CPU, run before and after a change), `drive.py` (walk the UI with injected input, screenshots), `shot.py` (screenshot). Copy to `/tmp` on the phone; run with `python3 -I`. Home returns to the first carousel item.
+- **Phone tools**: `tools/phone/`: `bench.py` (frame costs + live shell CPU, run before and after a change), `drive.py` (walk the UI with injected input, screenshots), `shot.py` (screenshot), `mkchime.py` (soft chime for testing Music), `mkjungle.py` (synthesises the Music test song; ~2 min, the phone's 32-bit ints and memory limit it: watch for overflow in numpy integer arrays, and avoid transforms of the whole song). Copy to `/tmp` on the phone; run with `python3 -I`. Home returns to the first carousel item.
 - **UI tests**: inject `input_event`s into event1 (SLOT 0, TRACKING_ID n, X, Y, SYN … TRACKING_ID -1) / event0 (keys). Screenshot = read `/dev/fb0` at `pan_y*480*4` (`/sys/class/graphics/fb0/pan`), as RGBX. Wake first (inject Home).
 
 ## 7. Subsystems
@@ -99,7 +99,9 @@ New OpenRC service: add `etc/init.d/X` to the overlay **and** to `FILES` in `too
 
 **Bluetooth** (needs our kernel with BT, `trendos.config`): OpenRC `btuart` (`bt-up`: `btchip.boot_raw(3000000, efs address)` then `btattach -B /dev/ttyS0 -P h4 -S 3000000` → hci0), `bluetooth` (BlueZ 5.86 bluetoothd), `btaudio` (bluealsa, A2DP source+sink), `dbus`. Address `D0:87:E2:DB:B7:94` from efs `bluetooth/bt_addr` (copied to `/data/bt/bt_addr`; chip default is 43:43:A1:…). UART at 3 Mbaud works (needed for A2DP). Quirks: Alpine's `bluealsa` service segfaults — bluealsa reads past the stack top where env strings live, so OpenRC's tiny environment crashes it; `btaudio` passes an 8 KB `STACK_PAD` env var. bluealsa's storage dir is `/usr/var/lib/bluealsa`. Bluetooth app: Settings → Bluetooth (on/off, scan 20 s, pair = pair+trust+connect, connect/disconnect, forget). Radio streams to a connected A2DP device (line-in 44.1 kHz stereo → `aplay -D bluealsa:…`), wired headphones muted (still the antenna).
 
-**Spotify** (shelved): go-librespot works for browsing/login, but every track fails `aes key code 1` (Spotify refuses librespot clients; workaround = DRM circumvention, not doing it). Code kept (`apps/spotify.py`, `etc/init.d/spotify`, `tools/spotify/`). Revive: import in `apps/__init__.py`, re-add Entry, `SPOTIFY=1 tools/deploy.sh`.
+**Music**: all C. `native/libtrend/src/apps/music/` = touch and drawing, pure like Calculator: touches return a `tr_music_cmd`, render is a function of state + status + library. `native/player/` = `libtrendplay.so`, a thread that scans `/data/music`, decodes (libsndfile: MP3, FLAC, Ogg, Opus, WAV) and plays (ALSA). `apps/music/app.py` only passes commands from one to the other and supplies fonts. Separate library because it holds state and needs `alsa-lib-dev` + `libsndfile-dev` (deploy installs them): if it's missing the app says so and the shell is fine. Output: Bluetooth > headphones (`/sys/class/switch/h2w/state`) > speaker, routed with `audio-speaker` / `audio-headphones` each time the device opens, so after the Radio has changed the mixer too. Volume is software, 0-15. **The audio device is exclusive, so anything else that plays must call `audio.take_output()` first** (`hw/audio.py`): it pauses Music and closes the device; Clock and Radio do. **Don't encode MP3 with libsndfile on the phone** (armv7 Alpine): even a sine comes out with bursts of near-full-scale noise every frame, whichever decoder reads it; cause not traced. Use FLAC. Decoding is fine. The player always reads float and clips itself: libsndfile's 16-bit reads make loud MP3s wrap and click, and leave float WAVs nearly silent. Limits: 512 tracks, Latin-1 titles, volume keys only while the app is open, nothing remembered across a shell restart. Tests: `native/player/tests/test_player.c` against ALSA's `null` device; the phone has no `make`, so compile as in its Makefile. Measured with the app open and playing: shell ~24 % of a core; closed on the home screen: ~11 %.
+
+**Spotify** (shelved): go-librespot works for browsing/login, but every track fails `aes key code 1` (Spotify refuses librespot clients; workaround = DRM circumvention, not doing it). Code kept (`apps/spotify/`, `etc/init.d/spotify`, `tools/spotify/`). Revive: import in `apps/__init__.py`, re-add Entry, `SPOTIFY=1 tools/deploy.sh`.
 
 ## 8. Dead ends (don't retry)
 TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · changing Samsung power-on logo from Linux/Download mode (WP + signed SBOOT; BootROM route paused, §7) · mainline/postmarketOS (no SC8830 port) · digital FM path · spotifyd/librespot playback.
@@ -108,4 +110,4 @@ TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · 
 `backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). **Full phone image** `backup/phone-image-2026-11-03/` (gitignored: all partitions except userdata + Android's userdata files; restore steps in its README). Never wipe efs/prodnv/*nv/PARAM/MODEM/bootloaders on the phone. Stock firmware zip in `firmware/stock/` (gitignored; samfw.com).
 
 ## 10. Next ideas
-Radio: seek + RDS once a real station is confirmed · Clock: timer/stopwatch · Settings: Display/Sound/About · music player · file transfer page · Bluetooth · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).
+Radio: seek + RDS once a real station is confirmed · Clock: timer/stopwatch · Settings: Display/Sound/About · Music: shuffle, albums, volume keys outside the app, remember volume and place · file transfer page · Bluetooth · more apps (system monitor, notes, smart-home controller) · server services (web, DNS ad-block, MQTT) · notifications (ntfy). No SMS/calls (no SIM).

@@ -37,6 +37,15 @@ def plus():
                  colour_by_axis=(YELLOW, WHITE, ORANGE))
 
 
+@model("music", MAGENTA)
+def music():
+    """Music: two beamed notes."""
+    return boxes([((-0.95, -0.82, 0), (0.42, 0.30, 0.24)), ((0.60, -0.62, 0), (0.42, 0.30, 0.24)),
+                  ((-0.65, 0.14, 0), (0.12, 0.92, 0.20)), ((0.90, 0.34, 0), (0.12, 0.92, 0.20)),
+                  ((0.125, 1.02, 0), (0.895, 0.22, 0.20))],
+                 colour_by_axis=(MAGENTA, WHITE, MAGENTA))
+
+
 @model("settings", CYAN)
 def settings():
     """Settings: three stacked horizontal bars (like sliders)."""

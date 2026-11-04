@@ -3,6 +3,7 @@
 | Path | What it is | How it runs |
 |---|---|---|
 | `libtrend/` | The C core: pixels, 2D drawing, 3D meshes, visualisers, apps | Shared library, called from Python |
+| `player/` | The music player: finds, decodes and plays files on its own thread | Shared library, loaded when Music first opens |
 | `boot/` | `bootanim`, `charger`, `fbpan`: small static programs in the ramdisk | Standalone, before Python exists |
 
 Our kernel is the other C in the project. It's built from Samsung's source (`kernel/`).
@@ -41,6 +42,10 @@ libtrend is written in a functional style that doesn't give up speed:
 
 Because no state is hidden, every function can be tested alone and called from any thread.
 
+`player/` is the one exception, because playing audio is state. It's a separate library so that
+libtrend stays pure and the shell still starts without it, and its state lives behind an explicit
+handle rather than in globals.
+
 ## Adding to libtrend
 
 1. Declare the function in `include/trend/<module>.h` and write it in `src/<module>.c`.
@@ -50,18 +55,20 @@ Because no state is hidden, every function can be tested alone and called from a
 
 ## Apps in C
 
-An app can live entirely in `src/apps/`, with a thin class in `tos/apps/` connecting it to the
-shell. Calculator is the example:
+An app can live entirely in `src/apps/<app>/`, with a thin class in `tos/apps/<app>/app.py`
+connecting it to the shell. Each app has its own folder on both sides. Calculator is the example:
 
 - `expr.c`: the pure logic, usable by anything.
-- `apps/calculator.c`: behaviour. The state is opaque to Python. Each function takes the state in
+- `apps/calculator/calculator.c`: behaviour. The state is opaque to Python. Each function takes the state in
   and writes the next state out.
-- `apps/calculator_view.c`: drawing, a pure function from state and time to pixels. Redraw the whole
+- `apps/calculator/calculator_view.c`: drawing, a pure function from state and time to pixels. Redraw the whole
   app area each time rather than caching tiles, unless a measurement says otherwise.
-- `tos/apps/calculator.py`: forwards touches, and supplies the fonts PIL rasterises once.
+- `tos/apps/calculator/app.py`: forwards touches, and supplies the fonts PIL rasterises once.
 
-Apps that drive hardware or run tools like `bluetoothctl` keep that part in Python, in a worker
-thread, and pass the results to C.
+Apps that drive hardware or run tools like `bluetoothctl` usually keep that part in Python, in a
+worker thread, and pass the results to C. Music is the all-C alternative: `src/apps/music/` turns
+touches into commands, and `player/` carries them out and reports back a status to draw. Python only
+passes them across.
 
 ## Building and testing
 
@@ -70,6 +77,9 @@ cd native/libtrend
 make test     # unit tests under the address and undefined-behaviour sanitizers
 make          # libtrend.so for this machine
 ```
+
+`player/` needs ALSA and libsndfile headers, so build and test it on the phone. The phone has no
+`make`, so run the compile lines from `player/Makefile` by hand.
 
 `tools/deploy.sh` builds the library on the phone with the NEON flags. The NEON paths only run
 there, so also run the tests on the phone after changing them.

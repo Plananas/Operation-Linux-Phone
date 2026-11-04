@@ -3,8 +3,22 @@ headphones (BlueALSA, service btaudio).
 
     bt_sink()          address of a connected Bluetooth audio device (A2DP), or None
     bt_device(mac)     ALSA device name to play to it (aplay -D ...)
+    take_output()      call before playing anything: pauses the music and frees the audio device
+    on_take_output(f)  the Music app registers how to do that
 """
 import subprocess
+
+_release_music = None
+
+
+def on_take_output(release):
+    global _release_music
+    _release_music = release
+
+
+def take_output():
+    if _release_music is not None:
+        _release_music()
 
 
 def bt_sink():

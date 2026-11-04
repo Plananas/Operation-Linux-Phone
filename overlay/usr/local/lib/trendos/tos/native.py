@@ -9,7 +9,7 @@ from ctypes import Structure, c_char_p, c_double, c_float, c_int, c_size_t, c_ui
 
 import numpy as np
 
-from .config import LIBTREND
+from .config import LIBTREND, LIBTRENDPLAY
 
 
 class Surface(Structure):
@@ -61,6 +61,14 @@ class CalcTheme(Structure):
                 ("accent", c_uint32), ("error", c_uint32)]
 
 
+class MusicCmd(Structure):
+    _fields_ = [("kind", c_int), ("arg", c_int)]
+
+
+class MusicTheme(Structure):
+    _fields_ = [("fonts", c_void_p * 4), ("accent", c_uint32), ("error", c_uint32)]
+
+
 _vp, _i, _f = c_void_p, c_int, c_float
 _SIGNATURES = {
     "tr_rgb_to_rgbx":     (None, [_vp, _vp, c_size_t]),
@@ -87,12 +95,30 @@ _SIGNATURES = {
     "tr_calc_frame_key":  (c_uint64, [_vp, c_double]),
     "tr_calc_render":     (None, [_vp, _vp, c_double, Surface]),
     "tr_calc_expr":       (c_char_p, [_vp]),
+    "tr_music_size":        (c_size_t, []),
+    "tr_music_status_size": (c_size_t, []),
+    "tr_music_library_size": (c_size_t, []),
+    "tr_music_init":        (None, [_vp]),
+    "tr_music_status_init": (None, [_vp, c_char_p]),
+    "tr_music_touch":       (MusicCmd, [_vp, _vp, _vp, _i, _i, _i]),
+    "tr_music_on_key":      (MusicCmd, [_i, _i]),
+    "tr_music_follow":      (None, [_vp, _vp, _vp]),
+    "tr_music_frame_key":   (c_uint64, [_vp, _vp, c_double]),
+    "tr_music_render":      (None, [_vp, _vp, _vp, _vp, Surface]),
+}
+
+# libtrendplay: loaded when Music first opens, and allowed to be missing.
+_PLAYER_SIGNATURES = {
+    "tr_player_new":     (_vp, [c_char_p, c_char_p]),
+    "tr_player_command": (None, [_vp, MusicCmd]),
+    "tr_player_status":  (None, [_vp, _vp]),
+    "tr_player_library": (None, [_vp, _vp]),
 }
 
 
-def _load(path):
+def _load(path, signatures=_SIGNATURES):
     lib = ctypes.CDLL(path)
-    for name, (restype, argtypes) in _SIGNATURES.items():
+    for name, (restype, argtypes) in signatures.items():
         fn = getattr(lib, name)
         fn.restype, fn.argtypes = restype, argtypes
     return lib
@@ -289,3 +315,87 @@ def calc_render(state, theme, now, dst):
 
 def calc_expr(state):
     return _lib.tr_calc_expr(state).decode("latin-1")
+
+
+# ---- the Music app -----------------------------------------------------------------------------
+MUSIC_RESCAN, MUSIC_RELEASE = MusicCmd(7, 0), MusicCmd(8, 0)    # trend/apps/music.h
+
+
+def _aligned(size):
+    """Opaque zeroed memory for a C struct, aligned for the doubles inside it."""
+    return (c_double * (size // ctypes.sizeof(c_double) + 1))()
+
+
+def music_new():
+    state = _aligned(_lib.tr_music_size())
+    _lib.tr_music_init(state)
+    return state
+
+
+def music_status_new():
+    status = _aligned(_lib.tr_music_status_size())
+    _lib.tr_music_status_init(status, None)
+    return status
+
+
+def music_status_init(status, error):
+    _lib.tr_music_status_init(status, error.encode("latin-1"))
+
+
+def music_library_new():
+    return _aligned(_lib.tr_music_library_size())
+
+
+def music_theme(tables, accent, error):
+    """The fonts (sizes 16, 17, 22, 25, in order) and colours. tables must outlive it."""
+    fonts = (c_void_p * 4)(*map(ctypes.addressof, tables))
+    return MusicTheme(fonts, colour(accent), colour(error))
+
+
+def music_touch(state, status, event, x, y):
+    """Apply a touch in app-area coordinates. Returns a command for the player."""
+    return _lib.tr_music_touch(state, state, status, TOUCH_EVENTS[event], x, y)
+
+
+def music_on_key(code, pressed):
+    return _lib.tr_music_on_key(code, pressed)
+
+
+def music_key_used(cmd):
+    return cmd.kind != 0 or cmd.arg != 0
+
+
+def music_frame_key(state, status, now):
+    """Keeps the playing track in view, and changes whenever the screen needs redrawing."""
+    _lib.tr_music_follow(state, state, status)
+    return _lib.tr_music_frame_key(state, status, now)
+
+
+def music_render(state, status, library, theme, dst):
+    _lib.tr_music_render(state, status, library, ctypes.byref(theme), surface(dst))
+
+
+def player_new(music_dir):
+    """A running player, or None if libtrendplay or what it needs isn't installed."""
+    global _player_lib
+    try:
+        if _player_lib is None:
+            _player_lib = _load(LIBTRENDPLAY, _PLAYER_SIGNATURES)
+    except OSError:
+        return None
+    return _player_lib.tr_player_new(music_dir.encode(), None)
+
+
+_player_lib = None
+
+
+def player_command(player, cmd):
+    _player_lib.tr_player_command(player, cmd)
+
+
+def player_status(player, status):
+    _player_lib.tr_player_status(player, status)
+
+
+def player_library(player, library):
+    _player_lib.tr_player_library(player, library)

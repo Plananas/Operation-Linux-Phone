@@ -14,11 +14,11 @@ import threading, time, traceback
 
 from PIL import Image, ImageDraw
 
-from ..config import W, APP_H, ACCENT, PALETTE, YELLOW
-from ..gfx import to_rgbx, text_len, draw_text
-from ..hw.sshmon import SshMon
-from ..ui import BG, DIM, MID, ERR, FLARE, card
-from .base import App
+from ...config import W, APP_H, ACCENT, PALETTE, YELLOW
+from ...gfx import to_rgbx, text_len, draw_text
+from ...hw.sshmon import SshMon
+from ...ui import BG, DIM, MID, ERR, FLARE, card
+from ..base import App
 
 WARN = PALETTE[YELLOW]
 STATUS = (14, 12, W - 14, 128)

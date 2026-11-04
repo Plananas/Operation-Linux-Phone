@@ -21,13 +21,13 @@ import json, math, os, subprocess, threading, time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from ..config import W, TOP, APP_H, ACCENT, SHADES, NS, CW, CH, GREEN, DIMGREEN
-from ..render import card_tiles
-from ..gfx import font, to_rgbx, text_len, draw_text
-from .. import canvas, native
-from ..hw import audio, fm
-from ..ui import BG, FRAME, FRAME_HI, PANEL, SCAN, DIM, MID, FLARE, ERR, KEY_STYLE, mix as _mix, card as _card
-from .base import App
+from ...config import W, TOP, APP_H, ACCENT, SHADES, NS, CW, CH, GREEN, DIMGREEN
+from ...render import card_tiles
+from ...gfx import font, to_rgbx, text_len, draw_text
+from ... import canvas, native
+from ...hw import audio, fm
+from ...ui import BG, FRAME, FRAME_HI, PANEL, SCAN, DIM, MID, FLARE, ERR, KEY_STYLE, mix as _mix, card as _card
+from ..base import App
 
 STATE_FILE = "/var/lib/trendos/radio.json"
 CAPTURE = ["arecord", "-q", "-D", f"hw:CARD={fm.CARD},DEV=0", "-f", "S16_LE", "-c", "1", "-r", "16000", "-t", "raw"]
@@ -119,6 +119,7 @@ class RadioApp(App):
 
     # ---- lifecycle -----------------------------------------------------------------------
     def on_open(self):
+        audio.take_output()
         with self._lock:
             self.want_on, self.closing = True, False
             if self._worker is None:
