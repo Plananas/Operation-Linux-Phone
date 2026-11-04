@@ -46,6 +46,29 @@ def music():
                  colour_by_axis=(MAGENTA, WHITE, MAGENTA))
 
 
+@model("folder", YELLOW)
+def folder():
+    """Files: an open folder, in layers so that it reads at this resolution. A darker back with its
+    tab on the left, a white page with lines of text standing out of it on the right, and a bright
+    front flap that leans out towards the bottom."""
+    def back(x, y):
+        in_body = abs(x) <= 1.12 and -0.7 <= y <= 0.5
+        in_tab = -1.12 <= x <= -0.3 and 0.5 < y <= 0.86
+        return ORANGE if in_body or in_tab else None
+
+    def page(x, y):
+        in_line = (0.66 <= y <= 0.8 or 0.34 <= y <= 0.48) and -0.02 <= x <= 0.72
+        return None if in_line or not (-0.18 <= x <= 0.92 and -0.5 <= y <= 1.0) else WHITE
+
+    def flap(x, y):
+        half_width = 1.3 - 0.22 * (y + 0.95) / 1.1         # narrower at the top edge
+        return YELLOW if abs(x) <= half_width and -0.95 <= y <= 0.15 else None
+
+    return Shape.combine(relief(back, 0.09).transformed(t=(0, 0, 0.22)),
+                         relief(page, 0.03).transformed(t=(0, 0, 0.05)),
+                         relief(flap, 0.09).transformed(t=(0, 0, -0.14)))
+
+
 @model("settings", CYAN)
 def settings():
     """Settings: three stacked horizontal bars (like sliders)."""

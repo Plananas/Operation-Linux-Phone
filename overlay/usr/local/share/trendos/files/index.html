@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TREND OS Files</title>
+<style>
+@font-face { font-family: VT323; src: url(vt323.ttf); }
+:root { --green: #33ff99; --mid: #00964f; --dim: #006e3e; --frame: #005530; --panel: #000704; --text: #bef5d2; --red: #ff6e6e; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #000; color: var(--text); font: 22px/1.25 VT323, ui-monospace, monospace; font-variant-ligatures: none; }
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px); }
+main { max-width: 760px; margin: 0 auto; padding: 16px; }
+h1 { color: var(--green); font-size: 34px; font-weight: normal; margin: 4px 0 14px; text-shadow: 0 0 8px rgba(51,255,153,.5); }
+.card { position: relative; background: var(--panel); border: 2px solid var(--frame); border-radius: 9px; padding: 14px; margin-bottom: 18px; }
+.muted { color: var(--mid); }
+.err { color: var(--red); }
+.err:empty { display: none; }
+button, .btn { font: inherit; color: var(--green); background: #000e08; border: 2px solid var(--mid); border-radius: 7px; padding: 6px 14px;
+  cursor: pointer; text-decoration: none; display: inline-block; }
+button:hover, .btn:hover, button:focus-visible, .btn:focus-visible { background: var(--green); color: #000; outline: none; }
+button.danger { color: var(--red); border-color: #7d2a2a; background: #0e0303; }
+button.danger:hover, button.danger:focus-visible { background: var(--red); color: #000; }
+button.link { background: none; border: 0; padding: 0; color: var(--green); text-align: left; overflow-wrap: anywhere; }
+button.link:hover, button.link:focus-visible { background: none; color: var(--text); text-decoration: underline; }
+#pin { font: inherit; font-size: 48px; letter-spacing: 8px; width: 100%; max-width: 280px; background: #000; color: var(--green); border: 2px solid var(--mid);
+  border-radius: 7px; padding: 4px 12px; text-align: center; }
+#pin:focus { outline: 2px solid var(--green); }
+#crumbs { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-bottom: 12px; align-items: baseline; }
+#drop { border: 2px dashed var(--mid); border-radius: 7px; padding: 22px 12px; text-align: center; }
+#drop.over { background: #002a18; border-color: var(--green); }
+.tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+ul { list-style: none; margin: 0; padding: 0; }
+li.row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 9px 0; border-top: 1px solid var(--frame); align-items: center; }
+li.row:first-child { border-top: 0; }
+.name { overflow-wrap: anywhere; }
+.acts { display: flex; gap: 8px; }
+.acts .btn, .acts button { padding: 2px 10px; font-size: 20px; }
+.up { padding: 6px 0; }
+.bar { height: 8px; background: #00331e; border-radius: 2px; overflow: hidden; margin-top: 3px; }
+.bar i { display: block; height: 100%; width: 0; background: var(--green); }
+[hidden] { display: none !important; }
+@media (max-width: 480px) { li.row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<h1>TREND OS Files</h1>
+
+<section id="login" class="card" hidden>
+  <form id="login-form">
+    <label for="pin">Enter the PIN shown on the phone</label><br><br>
+    <input id="pin" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]{6}" required>
+    <br><br>
+    <button>Open</button>
+    <p class="err" id="login-err" role="alert"></p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <section class="card">
+    <nav id="crumbs" aria-label="Folder"></nav>
+    <div id="drop">
+      <span id="drop-text">Drop files here</span>
+      <div class="tools" style="justify-content:center">
+        <label class="btn" for="pick" tabindex="0">Choose files</label>
+        <input id="pick" type="file" multiple hidden>
+        <button id="mkdir" type="button">New folder</button>
+      </div>
+    </div>
+    <div id="uploads"></div>
+    <p class="err" id="err" role="alert"></p>
+  </section>
+  <section class="card">
+    <ul id="list"></ul>
+    <p class="muted" id="free"></p>
+  </section>
+</div>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let path = [];                 // the folder being shown, one name per entry
+let entries = [];
+let free = 0;
+
+const enc = parts => parts.map(encodeURIComponent).join("/");
+const call = (method, url, body) => fetch(url, { method, body, headers: { "X-Trend": "1" }, credentials: "same-origin" });
+
+function size(n) {
+  if (n < 1024) return n + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let u = -1;
+  do { n /= 1024; u++; } while (n >= 1024 && u < 3);
+  return n.toFixed(1) + " " + units[u];
+}
+
+function show(which) {
+  $("login").hidden = which !== "login";
+  $("app").hidden = which !== "app";
+  if (which === "login") $("pin").focus();
+}
+
+async function failure(res) {
+  if (res.status === 401) { show("login"); return "Enter the PIN first."; }
+  const text = await res.text().catch(() => "");
+  return text || "That didn't work (" + res.status + ").";
+}
+
+function element(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  e.append(...kids);
+  return e;
+}
+
+function crumbs() {
+  const nav = $("crumbs");
+  nav.replaceChildren();
+  const add = (label, to) => {
+    if (nav.childElementCount) nav.append("/");
+    nav.append(element("button", { className: "link", type: "button", textContent: label, onclick: () => go(to) }));
+  };
+  add("phone", []);
+  path.forEach((name, i) => add(name, path.slice(0, i + 1)));
+  const top = path.length === 0;
+  $("drop").style.display = top ? "none" : "";
+}
+
+function draw() {
+  crumbs();
+  const list = $("list");
+  list.replaceChildren();
+  const sorted = [...entries].sort((a, b) => b.dir - a.dir || a.name.localeCompare(b.name));
+  for (const e of sorted) {
+    const here = [...path, e.name];
+    const name = e.dir
+      ? element("button", { className: "link name", type: "button", textContent: e.name + "/", onclick: () => go(here) })
+      : element("span", { className: "name", textContent: e.name });
+    const acts = element("div", { className: "acts" });
+    if (!e.dir) {
+      acts.append(element("span", { className: "muted", textContent: size(e.size) }));
+      acts.append(element("a", { className: "btn", href: "api/file/" + enc(here), textContent: "Get", download: e.name }));
+    }
+    if (path.length) acts.append(element("button", { className: "danger", type: "button", textContent: "Delete", onclick: () => remove(e, here) }));
+    list.append(element("li", { className: "row" }, name, acts));
+  }
+  if (!sorted.length) list.append(element("li", { className: "muted", textContent: "Nothing here yet." }));
+  $("free").textContent = size(free) + " free on the phone";
+}
+
+async function go(to) {
+  $("err").textContent = "";
+  const res = await call("GET", "api/list" + (to.length ? "/" + enc(to) : "")).catch(() => null);
+  if (!res) { $("err").textContent = "Can't reach the phone. Is sharing still on?"; return; }
+  if (!res.ok) { const msg = await failure(res); $("err").textContent = msg; return; }
+  const data = await res.json();
+  path = to; entries = data.entries; free = data.free;
+  show("app");
+  draw();
+}
+
+async function remove(e, here) {
+  if (!confirm("Delete " + e.name + "?")) return;
+  const res = await call("DELETE", "api/file/" + enc(here)).catch(() => null);
+  if (!res) { $("err").textContent = "Can't reach the phone."; return; }
+  if (!res.ok) { $("err").textContent = await failure(res); return; }
+  go(path);
+}
+
+function uploadOne(file, row, bar) {
+  return new Promise(done => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", "api/file/" + enc([...path, file.name]));
+    x.setRequestHeader("X-Trend", "1");
+    x.upload.onprogress = ev => { if (ev.total) bar.style.width = (100 * ev.loaded / ev.total) + "%"; };
+    const fail = msg => { row.lastChild.remove(); row.append(element("div", { className: "err", textContent: msg })); done(false); };
+    x.onload = () => {
+      if (x.status === 201) { row.remove(); done(true); return; }
+      if (x.status === 401) show("login");
+      fail(x.responseText || "That didn't work (" + x.status + ").");
+    };
+    x.onerror = () => fail("The connection dropped.");
+    x.send(file);
+  });
+}
+
+let chain = Promise.resolve();  // one at a time: the phone's Wi-Fi and disk are slow
+function upload(files) {
+  for (const file of files) {
+    const replacing = entries.some(e => e.name === file.name);
+    if (replacing && !confirm("Replace " + file.name + "?")) continue;
+    if (file.size > free) { $("err").textContent = file.name + " won't fit on the phone."; continue; }
+    const bar = element("i");
+    const row = element("div", { className: "up" },
+      element("div", { className: "name", textContent: file.name + "  (" + size(file.size) + ")" }),
+      element("div", { className: "bar" }, bar));
+    $("uploads").append(row);
+    chain = chain.then(() => uploadOne(file, row, bar)).then(() => go(path));
+  }
+}
+
+$("login-form").onsubmit = async ev => {
+  ev.preventDefault();
+  $("login-err").textContent = "";
+  const res = await call("POST", "api/login", $("pin").value).catch(() => null);
+  $("pin").value = "";
+  if (!res) { $("login-err").textContent = "Can't reach the phone. Is sharing still on?"; return; }
+  if (res.ok) { go([]); return; }
+  $("login-err").textContent = await res.text();
+  $("pin").focus();
+};
+
+$("pick").onchange = ev => { upload(ev.target.files); ev.target.value = ""; };
+document.querySelector("label[for=pick]").onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); $("pick").click(); } };
+
+$("mkdir").onclick = async () => {
+  const name = prompt("Name of the new folder");
+  if (!name) return;
+  const res = await call("POST", "api/dir/" + enc([...path, name])).catch(() => null);
+  if (!res) { $("err").textContent = "Can't reach the phone."; return; }
+  if (!res.ok) { $("err").textContent = await failure(res); return; }
+  go(path);
+};
+
+const drop = $("drop");
+const quiet = ev => { ev.preventDefault(); ev.stopPropagation(); };
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, ev => { quiet(ev); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, ev => { quiet(ev); drop.classList.remove("over"); }));
+drop.addEventListener("drop", ev => upload(ev.dataTransfer.files));
+["dragover", "drop"].forEach(t => window.addEventListener(t, ev => ev.preventDefault()));
+
+go([]);
+</script>
+</body>
+</html>

@@ -15,5 +15,6 @@ from .music import MusicApp
 from .clock import ClockApp
 from .bluetooth import BluetoothApp
 from .ssh import SshApp
+from .files import FilesApp
 
-__all__ = ["App", "CalculatorApp", "WifiApp", "RadioApp", "MusicApp", "ClockApp", "BluetoothApp", "SshApp"]
+__all__ = ["App", "CalculatorApp", "WifiApp", "RadioApp", "MusicApp", "ClockApp", "BluetoothApp", "SshApp", "FilesApp"]

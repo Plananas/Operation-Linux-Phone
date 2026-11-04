@@ -56,6 +56,11 @@ class Dial(Structure):
                 ("rows", c_int), ("cols", c_int), ("tape_w", c_int)]
 
 
+class FilesTheme(Structure):
+    _fields_ = [("fonts", c_void_p * 5), ("accent", c_uint32), ("error", c_uint32),
+                ("icon", Mesh), ("view", View), ("atlas", Atlas)]
+
+
 class CalcTheme(Structure):
     _fields_ = [("fonts", c_void_p * 7), ("shades", c_char_p), ("n_shades", c_int),
                 ("accent", c_uint32), ("error", c_uint32)]
@@ -95,6 +100,16 @@ _SIGNATURES = {
     "tr_calc_frame_key":  (c_uint64, [_vp, c_double]),
     "tr_calc_render":     (None, [_vp, _vp, c_double, Surface]),
     "tr_calc_expr":       (c_char_p, [_vp]),
+    "tr_files_size":        (c_size_t, []),
+    "tr_files_status_size": (c_size_t, []),
+    "tr_files_init":        (None, [_vp]),
+    "tr_files_status_init": (None, [_vp]),
+    "tr_files_feed":        (None, [_vp, c_char_p, c_size_t]),
+    "tr_files_set_phase":   (None, [_vp, _i, c_char_p]),
+    "tr_files_phase":       (_i, [_vp]),
+    "tr_files_touch":       (_i, [_vp, _vp, _vp, _i, _i, _i]),
+    "tr_files_frame_key":   (c_uint64, [_vp, _vp, c_double]),
+    "tr_files_render":      (None, [_vp, _vp, _vp, c_double, Surface]),
     "tr_music_size":        (c_size_t, []),
     "tr_music_status_size": (c_size_t, []),
     "tr_music_library_size": (c_size_t, []),
@@ -322,6 +337,54 @@ def calc_expr(state):
 
 
 # ---- the Music app -----------------------------------------------------------------------------
+FILES_OFF, FILES_STARTING = 0, 1                                # trend/apps/files.h
+FILES_START, FILES_STOP = 1, 2
+
+
+def files_new():
+    state = _aligned(_lib.tr_files_size())
+    _lib.tr_files_init(state)
+    return state
+
+
+def files_status_new():
+    status = _aligned(_lib.tr_files_status_size())
+    _lib.tr_files_status_init(status)
+    return status
+
+
+def files_theme(tables, accent, error, icon, view, tiles_atlas):
+    """The fonts (sizes 16, 17, 22, 25, 54, in order), colours, and the folder to draw. tables and what
+    the mesh and atlas point at must outlive it."""
+    fonts = (c_void_p * 5)(*map(ctypes.addressof, tables))
+    return FilesTheme(fonts, colour(accent), colour(error), icon, view, tiles_atlas)
+
+
+def files_feed(status, data):
+    _lib.tr_files_feed(status, data, len(data))
+
+
+def files_set_phase(status, phase, message=None):
+    _lib.tr_files_set_phase(status, phase, message.encode("latin-1") if message else None)
+
+
+def files_phase(status):
+    return _lib.tr_files_phase(status)
+
+
+def files_touch(state, status, event, x, y):
+    """Apply a touch in app-area coordinates. Returns FILES_START, FILES_STOP or 0."""
+    return _lib.tr_files_touch(state, state, status, TOUCH_EVENTS[event], x, y)
+
+
+def files_frame_key(state, status, now):
+    return _lib.tr_files_frame_key(state, status, now)
+
+
+def files_render(state, status, theme, now, dst):
+    _lib.tr_files_render(state, status, ctypes.byref(theme), now, surface(dst))
+
+
 MUSIC_RESCAN, MUSIC_RELEASE = MusicCmd(7, 0), MusicCmd(8, 0)    # trend/apps/music.h
 
 

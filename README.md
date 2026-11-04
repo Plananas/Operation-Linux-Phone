@@ -56,6 +56,13 @@ title bar.
   3D waterfall landscape show the actual audio. It remembers your last station. With Bluetooth
   headphones or a speaker connected, the radio plays there (keep the wired headphones plugged in:
   they're still the antenna).
+- **Files** (the folder) — add and fetch files from a browser on your Wi-Fi, instead of `scp`. Tap
+  **start sharing**, open the address it shows on any device, and type the PIN from the phone's screen.
+  You can browse, upload (drag and drop works), download, delete and make folders in `/data/music` and
+  `/data/files`, and nothing else on the phone. Songs added to `music` show up next time you open Music.
+  Sharing is off until you start it, keeps going when you close the app or the screen turns off, and
+  stops when you tap **stop sharing**, after 30 idle minutes, or on a restart. The PIN is new each time,
+  and ten wrong guesses stop sharing. It uses plain HTTP, so only use it on a Wi-Fi network you trust.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop
@@ -110,9 +117,10 @@ overlay/                   everything installed on the phone; mirrors the phone'
 native/                    all our C; rules and style in native/README.md
   libtrend/                the C core, built into libtrend.so on the phone by deploy.sh
     include/trend/, src/   pixels, draw, mesh, viz, expr
-    src/apps/<app>/        the apps written in C, one folder each: calculator/, music/
+    src/apps/<app>/        the apps written in C, one folder each: calculator/, music/, files/
     tests/                 unit tests: make test
   player/                  Music's playback: libtrendplay.so, built on the phone by deploy.sh
+  filesd/                  the Files app's web server: its own unprivileged program, built on the phone by deploy.sh
   boot/                    bootanim, charger, fbpan: source + prebuilt static binaries for the ramdisk
 
 bootimg/                   putting a boot image together
@@ -175,8 +183,9 @@ Each layer only uses the ones above it.
 
 | To change... | Look in |
 |---|---|
-| An app | `overlay/usr/local/lib/trendos/tos/apps/<app>/` (Calculator and Music are really in `native/libtrend/src/apps/<app>/`) |
+| An app | `overlay/usr/local/lib/trendos/tos/apps/<app>/` (Calculator, Music and Files are really in `native/libtrend/src/apps/<app>/`) |
 | Music playback | `native/player/` |
+| The Files web server | `native/filesd/`, and the page in `overlay/usr/local/share/trendos/files/` |
 | Anything that draws too slowly | `native/libtrend/` |
 | How the phone starts | `bootimg/ramdisk/init`, then `overlay/etc/init.d/` |
 | Boot animation or charging screen | `native/boot/`, then rebuild the boot image |

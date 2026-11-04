@@ -12,7 +12,7 @@ from .canvas import text_strip
 from .gfx import canvas, crop_columns, to_rgbx, blit
 from . import models
 from .render import draw_band, matrix
-from .apps import CalculatorApp, WifiApp, RadioApp, MusicApp, ClockApp, BluetoothApp, SshApp
+from .apps import CalculatorApp, WifiApp, RadioApp, MusicApp, ClockApp, BluetoothApp, SshApp, FilesApp
 
 
 class Entry:
@@ -51,6 +51,7 @@ def default_entries():
         Entry("music", MusicApp(), phase=(0.8, 0.6, 0.4)),
         Entry("clock", ClockApp(), phase=(0.2, 1.3, 0.8)),
         Entry("terminal", SshApp(), phase=(0.5, 0.2, 1.0)),
+        Entry("folder", FilesApp(), phase=(0.1, 0.8, 0.6)),
         Entry("settings", opens="settings", name="Settings", phase=(0.3, 0.7, 0.2)),
     ]
 

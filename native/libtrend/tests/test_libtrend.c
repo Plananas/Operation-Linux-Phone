@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "trend/apps/calculator.h"
+#include "trend/apps/files.h"
 #include "trend/apps/music.h"
 #include "trend/draw.h"
 #include "trend/expr.h"
@@ -797,6 +798,135 @@ static void test_music_viz(void)
 	free(s);
 }
 
+static void feed(tr_files_status *st, const char *text)
+{
+	tr_files_feed(st, text, strlen(text));
+}
+
+static void test_files_status(void)
+{
+	tr_files_status *st = malloc(tr_files_status_size());
+	tr_files *s = malloc(tr_files_size());
+	tr_files_status_init(st);
+	tr_files_init(s);
+	CHECK(tr_files_phase(st) == TR_FILES_OFF);
+
+	/* The key starts it, but only if the finger stays on it. */
+	CHECK(tr_files_touch(s, s, st, TR_FILES_DOWN, 240, 670) == TR_FILES_NONE);
+	CHECK(tr_files_touch(s, s, st, TR_FILES_MOVE, 240, 100) == TR_FILES_NONE);
+	CHECK(tr_files_touch(s, s, st, TR_FILES_UP, 240, 670) == TR_FILES_NONE);
+	tr_files_touch(s, s, st, TR_FILES_DOWN, 240, 670);
+	CHECK(tr_files_touch(s, s, st, TR_FILES_UP, 240, 670) == TR_FILES_START);
+	CHECK(tr_files_touch(s, s, st, TR_FILES_DOWN, 240, 100) == TR_FILES_NONE);
+	CHECK(tr_files_touch(s, s, st, TR_FILES_UP, 240, 100) == TR_FILES_NONE);
+
+	/* While starting it does nothing, then lines arrive cut at any point. */
+	tr_files_set_phase(st, TR_FILES_STARTING, NULL);
+	tr_files_touch(s, s, st, TR_FILES_DOWN, 240, 670);
+	CHECK(tr_files_touch(s, s, st, TR_FILES_UP, 240, 670) == TR_FILES_NONE);
+	feed(st, "U 1234");
+	CHECK(tr_files_phase(st) == TR_FILES_STARTING);
+	feed(st, "56 80\nA 192.168.0.2\nF 1048576\n");
+	CHECK(tr_files_phase(st) == TR_FILES_ON);
+	CHECK(strcmp(tr_files_pin(st), "123456") == 0);
+
+	/* The key stops it, and the same text again doesn't redraw. */
+	tr_files_touch(s, s, st, TR_FILES_DOWN, 240, 670);
+	CHECK(tr_files_touch(s, s, st, TR_FILES_UP, 240, 670) == TR_FILES_STOP);
+	const uint64_t key = tr_files_frame_key(s, st, 1.0);
+	feed(st, "U 123456 80\nA 192.168.0.2\nF 1048576\n");
+	CHECK(tr_files_frame_key(s, st, 50.0) == key);
+
+	/* Something moving makes it animate; when it's finished, it stops. */
+	feed(st, "T 0 u a 10 100 caf\xc3\xa9.mp3\n");
+	CHECK(tr_files_frame_key(s, st, 1.0) != key);
+	CHECK(tr_files_frame_key(s, st, 2.0) != tr_files_frame_key(s, st, 1.0));
+	feed(st, "T 0 u k 100 100 caf\xc3\xa9.mp3\n");
+	CHECK(tr_files_frame_key(s, st, 1.0) == tr_files_frame_key(s, st, 2.0));
+
+	/* Nonsense from the server changes nothing and doesn't crash. */
+	feed(st, "T 99 u a 1 1 x\nT -1 u a 1 1 x\nT\n\nQ what\nU\nU x\nF\n");
+	char big[2000];
+	memset(big, 'A', sizeof(big));
+	big[0] = 'X';
+	big[1] = ' ';
+	tr_files_feed(st, big, sizeof(big));
+	feed(st, "\n");
+	CHECK(tr_files_phase(st) == TR_FILES_ON);
+
+	/* Stopping keeps a reason given by the server, and a fresh start forgets it. */
+	feed(st, "X too many wrong PINs\n");
+	tr_files_set_phase(st, TR_FILES_OFF, NULL);
+	CHECK(tr_files_phase(st) == TR_FILES_OFF);
+	CHECK(strcmp(tr_files_pin(st), "") == 0);
+	tr_files_set_phase(st, TR_FILES_STARTING, NULL);
+	CHECK(tr_files_phase(st) == TR_FILES_STARTING);
+
+	char text[32];
+	tr_files_format_size(0, text, sizeof(text));
+	CHECK(strcmp(text, "0 B") == 0);
+	tr_files_format_size(1023, text, sizeof(text));
+	CHECK(strcmp(text, "1023 B") == 0);
+	tr_files_format_size(1536, text, sizeof(text));
+	CHECK(strcmp(text, "1.5 KB") == 0);
+	tr_files_format_size(INT64_C(3) << 30, text, sizeof(text));
+	CHECK(strcmp(text, "3.0 GB") == 0);
+	free(st);
+	free(s);
+}
+
+/* Every state is drawn with a real font table and a long name, to catch overruns under the sanitizers. */
+static void test_files_render(void)
+{
+	enum { W = 480, H = 734 };
+	uint32_t *px = calloc(W * H, sizeof(*px));
+	const tr_surface dst = { (uint8_t *)px, W * 4, W, H };
+	static tr_glyph font[256];
+	static const uint8_t ink[64] = { 255 };
+	for (int i = 0; i < 256; i++)
+		font[i] = (tr_glyph){ ink, 8, 8, 0, 0, 10.0f };
+	const int32_t fstart[1] = { 0 };
+	const float none[3] = { 0.0f, 0.0f, 0.0f };
+	const int32_t col[1] = { 0 };
+	const uint8_t tiles[12 * 8 * 4] = { 0 };
+	const tr_files_theme theme = {
+		font, font, font, font, font, RED, BLUE,
+		{ none, fstart, none, none, col, 0 },
+		{ 22.0f, 0.66f, -4.5f, { 0.0f, 0.0f, -1.0f }, TR_FILES_ICON_COLS, TR_FILES_ICON_ROWS, 1 },
+		{ tiles, 12, 8 },
+	};
+	tr_files_status *st = malloc(tr_files_status_size());
+	tr_files *s = malloc(tr_files_size());
+	tr_files_status_init(st);
+	tr_files_init(s);
+
+	tr_files_render(s, st, &theme, 1.0, dst);
+	CHECK(px[670 * W + 240] != 0);          /* the start key is lit */
+	tr_files_set_phase(st, TR_FILES_STARTING, NULL);
+	tr_files_render(s, st, &theme, 1.0, dst);
+	feed(st, "U 000111 8080\nA 192.168.100.200\nF 12345678\n");
+	tr_files_render(s, st, &theme, 1.0, dst);
+	feed(st, "A \n");
+	tr_files_render(s, st, &theme, 1.0, dst);
+	char line[400];
+	char name[300];
+	memset(name, 'n', sizeof(name) - 1);
+	name[sizeof(name) - 1] = '\0';
+	for (int i = 0; i < 5; i++) {
+		snprintf(line, sizeof(line), "T %d %c %c 5 10 %s\n", i, i % 2 ? 'd' : 'u', "akx"[i % 3], name);
+		feed(st, line);
+	}
+	tr_files_render(s, st, &theme, 2.0, dst);
+	tr_files_touch(s, s, st, TR_FILES_DOWN, 240, 670);
+	tr_files_render(s, st, &theme, 2.0, dst);
+	feed(st, "X the web port is in use and this reason goes on and on and on, past the card and beyond it\n");
+	tr_files_set_phase(st, TR_FILES_OFF, NULL);
+	tr_files_render(s, st, &theme, 3.0, dst);
+	free(st);
+	free(s);
+	free(px);
+}
+
 int main(void)
 {
 	test_rgb_to_rgbx();
@@ -821,6 +951,8 @@ int main(void)
 	test_music_follow_and_key();
 	test_music_render();
 	test_music_viz();
+	test_files_status();
+	test_files_render();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

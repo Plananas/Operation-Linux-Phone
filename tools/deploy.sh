@@ -10,12 +10,13 @@ O=overlay
 FILES="usr/local/bin/trendos.py usr/local/bin/mksound.py usr/local/bin/mkcharger.py
        usr/local/lib/trendos/tos usr/local/sbin etc/init.d/bootscreen etc/init.d/usbnet etc/local.d
        etc/init.d/spotify etc/init.d/wifi etc/init.d/timesync etc/init.d/btuart etc/init.d/btaudio etc/conf.d/hwclock etc/timezone
-       var/lib/go-librespot/config.yml usr/local/share/trendos/fonts"
+       var/lib/go-librespot/config.yml usr/local/share/trendos/fonts usr/local/share/trendos/files"
 echo "== copying files to $HOST"
 tar -C "$O" --owner=0 --group=0 --exclude=__pycache__ -cf - $FILES | ssh "$HOST" 'tar -C / -xf -'
 ssh "$HOST" 'rm -rf /tmp/libtrend-src && mkdir /tmp/libtrend-src'
 tar -C native/libtrend --exclude=libtrend.so --exclude=test_libtrend -cf - include src | ssh "$HOST" 'tar -C /tmp/libtrend-src -xf -'
 tar -C native --exclude=libtrendplay.so --exclude=test_player -cf - player | ssh "$HOST" 'tar -C /tmp/libtrend-src -xf -'
+tar -C native --exclude=filesd/filesd --exclude=filesd/filesd-test --exclude=filesd/test_http -cf - filesd | ssh "$HOST" 'tar -C /tmp/libtrend-src -xf -'
 # Spotify player engine (built by tools/spotify/build-go-librespot.sh, not in git): with SPOTIFY=1, copy if changed
 GLR=tools/spotify/go-librespot
 if [ "${SPOTIFY:-0}" = 1 ] && [ -f "$GLR" ] && [ "$(ssh "$HOST" 'md5sum < /usr/local/bin/go-librespot 2>/dev/null')" != "$(md5sum < "$GLR")" ]; then
@@ -30,6 +31,10 @@ gcc -std=gnu11 -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -
 # The music player is optional: without it the Music app says so, and everything else works.
 apk info -e alsa-lib-dev libsndfile-dev >/dev/null || apk add -q alsa-lib-dev libsndfile-dev || echo "== no internet for the player'"'"'s packages"
 gcc -std=gnu11 -O2 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -Iplayer -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/libtrendplay.so player/player.c src/apps/music/music_text.c -lsndfile -lasound -lpthread -lm || echo "== libtrendplay not built: Music will say so"
+# The web server behind the Files app, and the user it runs as. It owns only the shared folders.
+gcc -std=gnu11 -O2 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wall -Wextra -o /usr/local/lib/trendos/filesd filesd/filesd.c filesd/http.c -lpthread
+id trendfiles >/dev/null 2>&1 || adduser -S -D -H -h /nonexistent -s /sbin/nologin trendfiles
+mkdir -p /data/files
 cd /
 rm -rf /tmp/libtrend-src /usr/local/lib/trendos/librender.so
 find /usr/local/lib/trendos -name __pycache__ -type d -exec rm -rf {} +

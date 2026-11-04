@@ -4,6 +4,7 @@
 |---|---|---|
 | `libtrend/` | The C core: pixels, 2D drawing, 3D meshes, visualisers, apps | Shared library, called from Python |
 | `player/` | The music player: finds, decodes and plays files on its own thread | Shared library, loaded when Music first opens |
+| `filesd/` | The web server behind the Files app | Its own program, started by the app, running without root |
 | `boot/` | `bootanim`, `charger`, `fbpan`: small static programs in the ramdisk | Standalone, before Python exists |
 
 Our kernel is the other C in the project. It's built from Samsung's source (`kernel/`).
@@ -46,6 +47,9 @@ Because no state is hidden, every function can be tested alone and called from a
 libtrend stays pure and the shell still starts without it, and its state lives behind an explicit
 handle rather than in globals.
 
+`filesd/` is separate for a different reason: it reads whatever the network sends, so it runs in its own
+process as its own user. `http.c` holds everything that only looks at bytes, and `filesd.c` does the I/O.
+
 ## Adding to libtrend
 
 1. Declare the function in `include/trend/<module>.h` and write it in `src/<module>.c`.
@@ -77,6 +81,10 @@ cd native/libtrend
 make test     # unit tests under the address and undefined-behaviour sanitizers
 make          # libtrend.so for this machine
 ```
+
+`filesd/` has `make test` too: unit tests, then a real server attacked over sockets, under the sanitizers.
+Also run `tests/test_server.py /usr/local/lib/trendos/filesd` on the phone after changing it, because the
+phone is where it starts as root, so some bugs only show there.
 
 `player/` needs ALSA and libsndfile headers, so build and test it on the phone. The phone has no
 `make`, so run the compile lines from `player/Makefile` by hand.

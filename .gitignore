@@ -17,3 +17,6 @@ backup/phone-image-*/
 backup/bootrom-read-*/
 # kernel test build output (kernel/build.sh); released images are boot-nativeN.img
 firmware/trendos/boot-kernel-test.img
+native/filesd/filesd
+native/filesd/filesd-test
+native/filesd/test_http
