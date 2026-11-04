@@ -43,15 +43,30 @@ def _font_tables(size):
     return native.glyph_table(), set()
 
 
+def _glyph_entry(ch, size):
+    """A table entry for one character. Its mask stays alive in _mask's cache."""
+    m, dx, dy, adv = _mask(ch, size)
+    if m is None:
+        return native.Glyph(None, 0, 0, dx, dy, adv)
+    return native.Glyph(m.ctypes.data, m.shape[1], m.shape[0], dx, dy, adv)
+
+
 def _load(table, loaded, data, size):
-    """Fill in any table entries data needs. The masks stay alive in _mask's cache."""
+    """Fill in any table entries data needs."""
     for byte in set(data) - loaded:
-        m, dx, dy, adv = _mask(chr(byte), size)
-        if m is None:
-            table[byte] = native.Glyph(None, 0, 0, dx, dy, adv)
-        else:
-            table[byte] = native.Glyph(m.ctypes.data, m.shape[1], m.shape[0], dx, dy, adv)
+        table[byte] = _glyph_entry(chr(byte), size)
         loaded.add(byte)
+
+
+def font_table(size, chars, extra):
+    """The glyph table for a size, loaded up front for C code that draws its own text. extra maps
+    spare byte values to characters outside Latin-1."""
+    table, loaded = _font_tables(size)
+    _load(table, loaded, chars.encode("latin-1"), size)
+    for byte, ch in extra.items():
+        table[byte] = _glyph_entry(ch, size)
+        loaded.add(byte)
+    return table
 
 
 def text(dst, x, y, s, size, colour):

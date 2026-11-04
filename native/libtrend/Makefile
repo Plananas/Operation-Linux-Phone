@@ -5,8 +5,8 @@
 CC      ?= gcc
 WARN    := -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -Werror
 CFLAGS  := -std=gnu11 -O3 -ftree-vectorize -fPIC -Iinclude $(WARN)
-SRC     := $(wildcard src/*.c)
-HDR     := $(wildcard include/trend/*.h)
+SRC     := $(wildcard src/*.c src/apps/*.c)
+HDR     := $(wildcard include/trend/*.h include/trend/apps/*.h src/apps/*.h)
 
 ifneq (,$(findstring armv7,$(shell uname -m)))
 CFLAGS  += -mcpu=cortex-a7 -mfpu=neon-vfpv4

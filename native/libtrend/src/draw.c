@@ -95,3 +95,28 @@ float tr_draw_text(tr_surface dst, const tr_glyph *font, const uint8_t *text, in
 	}
 	return pen;
 }
+
+float tr_text_width(const tr_glyph *font, const uint8_t *text, int n)
+{
+	float width = 0.0f;
+	for (int i = 0; i < n; i++)
+		width += font[text[i]].advance;
+	return width;
+}
+
+void tr_mask_text(uint8_t *mask, int w, int h, const tr_glyph *font, const uint8_t *text, int n, int x, int y, int level)
+{
+	float pen = (float)x;
+	for (int i = 0; i < n; i++) {
+		const tr_glyph g = font[text[i]];
+		const int gx = (int)pen + g.dx, gy = y + g.dy;
+		for (int r = g.mask ? tr_max(0, -gy) : g.h; r < g.h && gy + r < h; r++)
+			for (int c = tr_max(0, -gx); c < g.w && gx + c < w; c++) {
+				const int v = g.mask[r * g.w + c] * level / 255;
+				uint8_t *out = &mask[(gy + r) * w + gx + c];
+				if (v > *out)
+					*out = (uint8_t)v;
+			}
+		pen += g.advance;
+	}
+}

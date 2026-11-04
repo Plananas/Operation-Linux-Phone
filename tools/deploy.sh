@@ -25,7 +25,7 @@ fi
 echo "== building libtrend.so, restarting the shell"
 ssh "$HOST" "SPOTIFY=${SPOTIFY:-0}; "'set -e
 cd /tmp/libtrend-src
-gcc -std=gnu11 -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/libtrend.so src/*.c -lm
+gcc -std=gnu11 -O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -ftree-vectorize -Iinclude -Wall -Wextra -shared -fPIC -o /usr/local/lib/trendos/libtrend.so src/*.c src/apps/*.c -lm
 cd /
 rm -rf /tmp/libtrend-src /usr/local/lib/trendos/librender.so
 find /usr/local/lib/trendos -name __pycache__ -type d -exec rm -rf {} +

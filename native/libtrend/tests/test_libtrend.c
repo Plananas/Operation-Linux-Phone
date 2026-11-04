@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "trend/apps/calculator.h"
 #include "trend/draw.h"
+#include "trend/expr.h"
 #include "trend/mesh.h"
 #include "trend/pixels.h"
 #include "trend/viz.h"
@@ -341,6 +343,160 @@ static void test_dial(void)
 	CHECK(at(s, 0, 0) == TAPE_W - 1);
 }
 
+static void check_result(const char *expr, const char *want)
+{
+	char out[64];
+	const int ok = tr_expr_result(expr, out, sizeof(out));
+	const int good = want ? ok && strcmp(out, want) == 0 : !ok;
+	CHECK(good);
+	if (!good)
+		printf("  %s -> %s\n", expr, out);
+}
+
+static void test_expr(void)
+{
+	check_result("1+2*3", "7");
+	check_result("(1+2)*3", "9");
+	check_result("10/4", "2.5");
+	check_result("-5+-(2)", "-7");
+	check_result("--5", "5");
+	check_result("0*-1", "0");                 /* never "-0" */
+	check_result(".5+5.", "5.5");
+	check_result("00", "0");
+	check_result("007.5", "7.5");
+	check_result("1e+20", "1e+20");
+	check_result("999999999999999", "999999999999999");
+	check_result("1000000000000000", "1e+15");
+	check_result("1/3", "0.3333333333");
+	check_result("1e308*10", "inf");
+	/* errors */
+	check_result("007", NULL);
+	check_result("1/0", NULL);
+	check_result("1/(2-2)", NULL);
+	check_result("", NULL);
+	check_result(".", NULL);
+	check_result("1+", NULL);
+	check_result("*5", NULL);
+	check_result("()", NULL);
+	check_result("(1", NULL);
+	check_result("1)", NULL);
+	check_result("2(3)", NULL);
+	check_result("(2)3", NULL);
+	check_result("1.2.3", NULL);
+	check_result("1e", NULL);
+	check_result("1e+", NULL);
+	check_result("inf", NULL);
+	check_result("Error", NULL);
+}
+
+static void press_all(tr_calc *s, const unsigned *keys, int n, double *now)
+{
+	for (int i = 0; i < n; i++) {
+		tr_calc_press(s, s, keys[i], *now);
+		*now += 1.0;
+	}
+}
+
+static void test_calc_state(void)
+{
+	tr_calc *s = malloc(tr_calc_size());
+	double now = 100.0;
+	tr_calc_init(s);
+
+	const unsigned sum[] = { '1', '2', '+', TR_CALC_MINUS, '3', '=' };  /* the - replaces the + */
+	press_all(s, sum, 6, &now);
+	CHECK(strcmp(tr_calc_expr(s), "9") == 0);
+
+	const unsigned next[] = { '4' };                   /* a digit after a result starts fresh */
+	press_all(s, next, 1, &now);
+	CHECK(strcmp(tr_calc_expr(s), "4") == 0);
+
+	const unsigned bad[] = { '/', '0', '=' };
+	press_all(s, bad, 3, &now);
+	CHECK(strcmp(tr_calc_expr(s), "Error") == 0);
+	const unsigned after_error[] = { TR_CALC_DEL };    /* delete after a result clears it */
+	press_all(s, after_error, 1, &now);
+	CHECK(strcmp(tr_calc_expr(s), "") == 0);
+
+	const unsigned chain[] = { '2', '=', TR_CALC_MUL, '3', '=' };      /* an operator continues */
+	press_all(s, chain, 5, &now);
+	CHECK(strcmp(tr_calc_expr(s), "6") == 0);
+
+	for (int i = 0; i < 60; i++)                       /* the length limit holds */
+		tr_calc_press(s, s, '7', now);
+	CHECK(strlen(tr_calc_expr(s)) == 40);
+
+	/* A tap presses a key; a drag off it doesn't. "7" is row 1, column 0. */
+	tr_calc_press(s, s, 'C', now);
+	tr_calc_touch(s, s, TR_TOUCH_DOWN, 20, 340, now);
+	tr_calc_touch(s, s, TR_TOUCH_UP, 20, 340, now);
+	CHECK(strcmp(tr_calc_expr(s), "7") == 0);
+	tr_calc_touch(s, s, TR_TOUCH_DOWN, 20, 340, now);
+	tr_calc_touch(s, s, TR_TOUCH_MOVE, 20, 100, now);
+	tr_calc_touch(s, s, TR_TOUCH_UP, 20, 100, now);
+	CHECK(strcmp(tr_calc_expr(s), "7") == 0);
+	tr_calc_touch(s, s, TR_TOUCH_DOWN, 125, 340, now); /* the gap between keys */
+	tr_calc_touch(s, s, TR_TOUCH_UP, 125, 340, now);
+	CHECK(strcmp(tr_calc_expr(s), "7") == 0);
+	tr_calc_touch(s, s, TR_TOUCH_DOWN, -5, -5, now);   /* off the keypad entirely */
+	tr_calc_touch(s, s, TR_TOUCH_UP, 9999, 9999, now);
+	CHECK(strcmp(tr_calc_expr(s), "7") == 0);
+
+	/* Idle: the key is stable within a blink phase. A change moves it. */
+	const double phase = (double)(int)((now + 10.0) / 0.53) * 0.53 + 0.1;
+	const uint64_t k1 = tr_calc_frame_key(s, phase), k2 = tr_calc_frame_key(s, phase + 0.05);
+	CHECK(k1 == k2);
+	tr_calc_press(s, s, '1', phase);
+	CHECK(tr_calc_frame_key(s, phase) != k1);
+	free(s);
+}
+
+/* Every state and time renders within bounds; the sanitizers do most of the checking here. */
+static void test_calc_render(void)
+{
+	static tr_glyph font[256];
+	static const uint8_t ink[64] = { 255, 200, 100, 50 };
+	for (int i = 0; i < 256; i++)
+		font[i] = (tr_glyph){ ink, 8, 8, 0, -2, 9.5f };
+	font[' '] = (tr_glyph){ NULL, 0, 0, 0, 0, 9.5f };
+	const tr_calc_theme theme = { font, font, font, font, font, font, font, " .,-~:;=!*#$@", 13, RED, BLUE };
+	enum { W = 480, H = 734 };
+	static uint32_t px[H * W];
+	const tr_surface dst = { (uint8_t *)px, W * 4, W, H };
+	tr_calc *s = malloc(tr_calc_size());
+	double now = 50.0;
+	tr_calc_init(s);
+
+	const unsigned keys[] = {
+		'1', '/', '3', '=', '+', '7', '=', '(', '2', '=', '1', '/', '0', '=', 'C', '9', TR_CALC_MUL, '9', '=',
+		'8', '8', '8', '8', '8', '8', '8', '8', '8', '8', '8', '8', '8', '8', '8', '8', TR_CALC_MUL, '9', '=',
+		TR_CALC_DEL, 'C', '=',
+	};
+	for (size_t k = 0; k < sizeof(keys) / sizeof(keys[0]); k++) {
+		tr_calc_press(s, s, keys[k], now);
+		for (double dt = 0.0; dt < 1.0; dt += 0.043)
+			tr_calc_render(s, &theme, now + dt, dst);
+		now += 1.0;
+	}
+	for (int i = 0; i < 25; i++)                       /* a long expression and a long history */
+		tr_calc_press(s, s, i % 2 ? '+' : '7', now);
+	for (int i = 0; i < 5; i++) {
+		tr_calc_press(s, s, '=', now);
+		tr_calc_render(s, &theme, now + 0.05, dst);
+		tr_calc_press(s, s, '+', now + 1.0);
+		tr_calc_press(s, s, '1', now + 1.0);
+		tr_calc_render(s, &theme, now + 1.05, dst);
+		now += 2.0;
+	}
+	tr_calc_render(s, &theme, now, dst);
+	const uint32_t idle_px = at(dst, 60, 345);
+	tr_calc_touch(s, s, TR_TOUCH_DOWN, 20, 340, now);  /* a held key lights up */
+	tr_calc_render(s, &theme, now, dst);
+	CHECK(at(dst, 60, 345) != idle_px);
+	CHECK(at(dst, 0, 0) == 0xff000000u);               /* outside everything: background */
+	free(s);
+}
+
 int main(void)
 {
 	test_rgb_to_rgbx();
@@ -357,6 +513,9 @@ int main(void)
 	test_scope_audio();
 	test_terrain();
 	test_dial();
+	test_expr();
+	test_calc_state();
+	test_calc_render();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -5,7 +5,7 @@ numbers; they never see a pointer. Like the C underneath, these functions keep n
 reads its inputs and writes only to the output array it was given.
 """
 import ctypes
-from ctypes import Structure, c_double, c_float, c_int, c_size_t, c_uint32, c_void_p
+from ctypes import Structure, c_char_p, c_double, c_float, c_int, c_size_t, c_uint, c_uint32, c_uint64, c_void_p
 
 import numpy as np
 
@@ -56,6 +56,11 @@ class Dial(Structure):
                 ("rows", c_int), ("cols", c_int), ("tape_w", c_int)]
 
 
+class CalcTheme(Structure):
+    _fields_ = [("fonts", c_void_p * 7), ("shades", c_char_p), ("n_shades", c_int),
+                ("accent", c_uint32), ("error", c_uint32)]
+
+
 _vp, _i, _f = c_void_p, c_int, c_float
 _SIGNATURES = {
     "tr_rgb_to_rgbx":     (None, [_vp, _vp, c_size_t]),
@@ -74,6 +79,14 @@ _SIGNATURES = {
     "tr_scope_frame":     (_f, [_vp, _i, _i, Scope, _f, Surface, _i, _i]),
     "tr_terrain_draw":    (None, [Terrain, _vp, Atlas, Surface, _i, _i]),
     "tr_dial_draw":       (None, [Dial, c_double, Surface, _i, _i]),
+    "tr_expr_result":     (_i, [c_char_p, _vp, c_size_t]),
+    "tr_calc_size":       (c_size_t, []),
+    "tr_calc_init":       (None, [_vp]),
+    "tr_calc_touch":      (None, [_vp, _vp, _i, _i, _i, c_double]),
+    "tr_calc_press":      (None, [_vp, _vp, c_uint, c_double]),
+    "tr_calc_frame_key":  (c_uint64, [_vp, c_double]),
+    "tr_calc_render":     (None, [_vp, _vp, c_double, Surface]),
+    "tr_calc_expr":       (c_char_p, [_vp]),
 }
 
 
@@ -230,3 +243,49 @@ def dial(mips, key, lut, offset, mip_of_col, tape_start, px_per_unit):
 def dial_draw(d, position, dst, x, y):
     """Paint the drum into dst at (x, y), turned to position."""
     _lib.tr_dial_draw(d, position, surface(dst), x, y)
+
+
+# ---- the Calculator app ------------------------------------------------------------------------
+TOUCH_EVENTS = {"down": 0, "move": 1, "up": 2}
+
+
+def expr_result(expr):
+    """The formatted value of an arithmetic expression, or None if it's invalid."""
+    out = ctypes.create_string_buffer(64)
+    return out.value.decode("ascii") if _lib.tr_expr_result(expr.encode("ascii"), out, 64) else None
+
+
+def calc_new():
+    """A fresh calculator state: opaque to Python, and aligned for the doubles inside it."""
+    state = (c_double * (_lib.tr_calc_size() // ctypes.sizeof(c_double) + 1))()
+    _lib.tr_calc_init(state)
+    return state
+
+
+def calc_theme(tables, shades, accent, error):
+    """The fonts (sizes 16, 17, 22, 25, 32, 34, 54, in order) and colours. tables must outlive it."""
+    fonts = (c_void_p * 7)(*map(ctypes.addressof, tables))
+    return CalcTheme(fonts, shades.encode("ascii"), len(shades), colour(accent), colour(error))
+
+
+def calc_touch(state, event, x, y, now):
+    """Apply a touch in app-area coordinates to the state."""
+    _lib.tr_calc_touch(state, state, TOUCH_EVENTS[event], x, y, now)
+
+
+def calc_press(state, key, now):
+    _lib.tr_calc_press(state, state, key, now)
+
+
+def calc_frame_key(state, now):
+    """Changes whenever the screen needs redrawing."""
+    return _lib.tr_calc_frame_key(state, now)
+
+
+def calc_render(state, theme, now, dst):
+    """Draw the whole app area into dst."""
+    _lib.tr_calc_render(state, ctypes.byref(theme), now, surface(dst))
+
+
+def calc_expr(state):
+    return _lib.tr_calc_expr(state).decode("latin-1")

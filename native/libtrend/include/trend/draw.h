@@ -33,4 +33,10 @@ void tr_fill_mask(tr_surface dst, const uint8_t *mask, int mask_w, int mask_h, i
  * the last character. */
 float tr_draw_text(tr_surface dst, const tr_glyph *font, const uint8_t *text, int n, float x, int y, tr_colour c);
 
+/* Width in pixels of n characters. */
+float tr_text_width(const tr_glyph *font, const uint8_t *text, int n);
+
+/* Write text's coverage, scaled to level / 255, into a w x h 8-bit mask. */
+void tr_mask_text(uint8_t *mask, int w, int h, const tr_glyph *font, const uint8_t *text, int n, int x, int y, int level);
+
 #endif
