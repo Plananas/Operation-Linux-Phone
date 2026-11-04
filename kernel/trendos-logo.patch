@@ -1,0 +1,62 @@
+diff --git a/drivers/video/sprdfb/sprdfb_dispc.c b/drivers/video/sprdfb/sprdfb_dispc.c
+index 49abf39c..9e5659e7 100755
+--- a/drivers/video/sprdfb/sprdfb_dispc.c
++++ b/drivers/video/sprdfb/sprdfb_dispc.c
+@@ -2292,6 +2292,10 @@ static int32_t sprdfb_dispc_refresh_logo(struct sprdfb_device *dev)
+ 	return 0;
+ }
+ 
++/* TREND OS boot frame (kernel/mklogo_h.py). __initconst: freed after boot; logo_proc
++ * only runs from the framebuffer probe at ~0.4 s, long before init memory is freed. */
++#include "trendos_logo.h"
++
+ int32_t sprdfb_dispc_logo_proc(struct sprdfb_device *dev)
+ {
+ 	uint32_t logo_src_v = 0;
+@@ -2340,7 +2344,28 @@ int32_t sprdfb_dispc_logo_proc(struct sprdfb_device *dev)
+ 		return -1;
+ 	}
+ 
++#ifdef TRENDOS_LOGO_W
++	/* TREND OS: show our boot frame instead of keeping the bootloader's Samsung logo.
++	 * The buffer is already zeroed (__GFP_ZERO); paste the logo's bounding box into it. */
++	if (dev->bpp == 32 && dev->panel->width == 480 && dev->panel->height == 800) {
++		int y;
++		/* Also repaint the bootloader's buffer in place: the panel may still be scanning
++		 * it out (it showed the Samsung logo with only the copy changed). */
++		memset_io((void __iomem *)logo_src_v, 0, logo_size);
++		for (y = 0; y < TRENDOS_LOGO_H; y++) {
++			memcpy((uint32_t *)logo_dst_v + (TRENDOS_LOGO_Y + y) * 480 + TRENDOS_LOGO_X,
++			       trendos_logo + y * TRENDOS_LOGO_W, TRENDOS_LOGO_W * 4);
++			memcpy_toio((void __iomem *)((uint32_t *)logo_src_v + (TRENDOS_LOGO_Y + y) * 480 + TRENDOS_LOGO_X),
++			       trendos_logo + y * TRENDOS_LOGO_W, TRENDOS_LOGO_W * 4);
++		}
++		pr_info("[LCD] TREND OS: boot frame painted (src 0x%08x + copy)\n", lcd_base_from_uboot);
++	} else {
++		pr_info("[LCD] TREND OS: boot frame skipped (bpp %d, %dx%d)\n", dev->bpp, dev->panel->width, dev->panel->height);
++#endif
+ 	memcpy((void *)logo_dst_v, (void *)logo_src_v, logo_size);
++#ifdef TRENDOS_LOGO_W
++	}
++#endif
+ 
+ 	dma_sync_single_for_device(dev->of_dev, logo_dst_p,
+ 			logo_size, DMA_TO_DEVICE);
+diff --git a/drivers/video/sprdfb/sprdfb_main.c b/drivers/video/sprdfb/sprdfb_main.c
+index 9d572f0d..f638d986 100755
+--- a/drivers/video/sprdfb/sprdfb_main.c
++++ b/drivers/video/sprdfb/sprdfb_main.c
+@@ -634,10 +634,9 @@ static int sprdfb_probe(struct platform_device *pdev)
+ #else
+ 	dev->dev_id = pdev->id;
+ #endif
+-	if (recovery_mode == 1)
+-		dev->framebuffer_nr = 2;
+-	else
+-		dev->framebuffer_nr = 3;
++	/* TREND OS: always triple-buffer. Stock uses 2 buffers when booted as Android recovery;
++	 * TREND OS test kernels are booted from the RECOVERY partition and the shell needs 3. */
++	dev->framebuffer_nr = 3;
+ 	if((SPRDFB_MAINLCD_ID != dev->dev_id) &&(SPRDFB_SUBLCD_ID != dev->dev_id)){
+ 		printk(KERN_ERR "[LCD] sprdfb: sprdfb_probe fail. (unsupported device id)\n");
+ 		goto err0;

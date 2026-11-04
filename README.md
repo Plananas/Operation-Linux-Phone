@@ -53,8 +53,8 @@ The bottom of the home screen shows live stats: CPU, memory, battery, storage, n
 
 The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 
-- **Log in over USB** (always works): `ssh root@192.168.42.129` (key-based, no password).
-- **Log in over Wi-Fi:** `ssh root@<phone-wifi-ip>` (the phone shows its Wi-Fi IP in Settings → Wi-Fi).
+- **Log in over USB:** `ssh root@192.168.42.129` (key-based, no password). SSH only listens on the
+  USB link, so it can't be reached over Wi-Fi.
 - **Internet:** the phone gets its own internet from Wi-Fi — the laptop isn't needed. If you ever
   turn Wi-Fi off and want internet over the cable instead, run `sudo tools/pc-share-internet.sh`
   on the laptop once (shares internet but blocks the phone from the rest of your home network).
@@ -63,18 +63,18 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 
 ## Updating TREND OS
 
-- **Apps / home screen / anything in `tools/native/alpine-overlay/`:** run `tools/deploy.sh`.
+- **Apps / home screen / anything in `overlay/`:** run `tools/deploy.sh`.
   It copies the files, rebuilds the graphics engine and restarts the screen — about 10 seconds.
 - **Boot logo, boot animation, charging screen:** these live in the *boot image* and need a
-  rebuild + flash. Ask Claude, or see "Procedures" in `PLAN.md`.
+  rebuild + flash (`bootimg/`). Ask Claude, or see "Procedures" in `PLAN.md`.
 
 ## Getting out of trouble
 
 | Problem | Fix |
 |---|---|
 | Screen frozen / weird | `ssh root@192.168.42.129 rc-service bootscreen restart` |
-| Phone won't boot TREND OS | Pull battery, hold **Vol-Down + Home + Power** (Download mode), then on the laptop: `heimdall flash --KERNEL firmware/extracted/boot-native8.img` (our kernel) or `boot-native6.img` (Samsung's kernel) |
-| Want Android back | Same Download mode, then `heimdall flash --KERNEL firmware/extracted/boot.img` (stock) or `boot-root4.img` (rooted Android) |
+| Phone won't boot TREND OS | Pull battery, hold **Vol-Down + Home + Power** (Download mode), then on the laptop: `heimdall flash --KERNEL firmware/trendos/boot-native8.img` (our kernel) or `firmware/trendos/boot-native6.img` (Samsung's kernel) |
+| Want Android back | Same Download mode, then `heimdall flash --KERNEL firmware/stock/boot.img` (stock) or `firmware/android-rooted/boot-root4.img` (rooted Android) |
 | Phone totally dead (no logo, no Download mode) | Emergency chip mode: battery out and back in, **hold Volume Up** while plugging in USB → screen stays black, laptop sees a "Spreadtrum" device. Recovering from there needs extra tools (not set up yet). |
 
 **Really switching off:** with the cable plugged in, "Shut down" lands on the charging screen
@@ -84,20 +84,87 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 
 ## What's in this folder
 
-| Path | What it is |
+```
+README.md                  this guide
+PLAN.md                    technical notes for Claude: how it all works, quirks, procedures, adding an app
+
+overlay/                   everything installed on the phone; mirrors the phone's filesystem
+  etc/init.d/              services: bootscreen (the shell), usbnet, wifi, timesync, btuart, btaudio, spotify (shelved)
+  etc/conf.d/, etc/local.d/, etc/timezone    hardware clock, boot log, UK time
+  usr/local/bin/           trendos.py (shell entry point), mksound.py, mkcharger.py (startup sound, charger assets)
+  usr/local/sbin/          helpers: wifi-up, wifi-connect, wifi-autostart, bt-up, fmctl, audio-speaker,
+                           play-startup-sound, screen-on, ntp-synced
+  usr/local/share/trendos/fonts/    VT323
+  var/lib/go-librespot/    Spotify engine config (shelved)
+  usr/local/lib/trendos/tos/    the home screen and apps, in Python (map below)
+
+native/                    all our C; rules and style in native/README.md
+  libtrend/                the C core, built into libtrend.so on the phone by deploy.sh
+    include/trend/, src/   pixels, draw, mesh, viz, expr, and apps/ (Calculator)
+    tests/                 unit tests: make test
+  boot/                    bootanim, charger, fbpan: source + prebuilt static binaries for the ramdisk
+
+bootimg/                   putting a boot image together
+  ramdisk/init             the first thing that runs: charging screen, or logo and animation, then Alpine
+  mkramdisk.py             packs the ramdisk
+  repack_keep_dt.py        builds the boot image, keeping Spreadtrum's device tree (needed to boot)
+
+kernel/                    our Linux kernel: Samsung's source plus these
+  build.sh, Dockerfile     build it (GCC 4.7 in Docker), output firmware/trendos/boot-kernel-test.img
+  test-in-recovery.sh      try a new kernel from the recovery partition
+  trendos.config           our kernel options
+  trendos-logo.patch       the early TREND OS logo
+  mklogo_h.py, trendos_logo.h, bootframe.rgbx    the logo image and the header made from it
+
+tools/                     things you run on the laptop
+  deploy.sh                push updates to the phone
+  pc-share-internet.sh     share the laptop's internet with the phone
+  phone/                   copied to the phone to test it: bench.py (speed), drive.py (walks the UI), shot.py (screenshot)
+  bootloader/              emergency-mode (BootROM) tools, paused: bootrom_hello.py, bootrom-read.sh, spd_dump patch
+    logo/                  attempts at replacing the Samsung logo. mklogo.py needs cube.py, which no longer exists
+  android/                 for rooted Android and the old chroot setup: rootshell.sh, alpine-boot.sh
+  spotify/                 shelved Spotify engine build (Spotify blocks playback for this kind of client)
+  ext/ *                   third-party clones: kernel, kout (kernel build output), chipram, spreadtrum_flash, fdl-sc8830
+
+firmware/
+  stock/                   Samsung's boot.img and recovery.img, plus the full firmware zip *
+  android-rooted/          rooted Android boot images: boot-root4.img is the one to use
+  trendos/                 TREND OS boot images, boot-native1 to 8 (8 is current), boot-kernel-test.img *,
+                           and the patched SBOOT/PARAM from the logo attempts
+  alpine/                  the Alpine Linux base system
+
+backup/                    the phone's original bootloader and settings. NEVER DELETE
+  SBOOT, SPL, PARAM originals, pit.txt, getprop.txt, packages.txt, kingo/
+  phone-image-2026-11-03/ *    full phone image, with its own restore README (private: holds the IMEI)
+  bootrom-read-*/ *        output from BootROM read tests
+```
+
+`*` means not in git: too big, private or re-downloadable.
+
+**The rule for `overlay/`:** a file at `overlay/etc/init.d/wifi` lands at `/etc/init.d/wifi` on the
+phone. A new service also has to be added to `FILES` in `tools/deploy.sh`.
+
+### The Python package: `overlay/usr/local/lib/trendos/tos/`
+
+Each layer only uses the ones above it.
+
+| Layer | Modules |
 |---|---|
-| `README.md` | This guide |
-| `PLAN.md` | Technical notes for Claude: how everything works, quirks, procedures, how to add an app |
-| `tools/native/alpine-overlay/` | Everything installed on the phone (home screen, apps, services) |
-| `tools/native/` | Boot-image parts: startup script, boot animation, charging screen, graphics engine |
-| `tools/kernel/` | Our own Linux kernel build (Samsung's source + the early TREND OS logo) |
-| `tools/bootloader/` | Emergency-mode (BootROM) tools for a future bootloader logo swap |
-| `tools/deploy.sh` | Push updates to the phone |
-| `tools/pc-share-internet.sh` | Share the laptop's internet with the phone |
-| `tools/spotify/` | Shelved Spotify player build (Spotify blocks playback for this kind of client) |
-| `tools/bootlogo/`, `tools/ext/`, `bootrom_hello.py` | Old experiments: boot-logo attempts, emergency-flash tools |
-| `firmware/extracted/` | Boot images (stock Android and all TREND OS versions) |
-| `backup/` | Copies of the phone's original bootloader and settings — **never delete** |
+| **Foundations** | `config` (every constant), `native` (the only door into the C library) |
+| **`hw/`: the devices** | `fb` (screen), `inputdev` (touch and keys), `btchip` (Bluetooth/FM chip), `fm`, `bluetooth`, `audio`, `sshmon` |
+| **Drawing** | `gfx`, `canvas`, `render` (3D), `ui` (the shared look), `keyboard`, `models/` (the 3D icons) |
+| **`apps/`** | `base`, `calculator`, `radio`, `clock`, `ssh`, `wifi`, `bluetooth`, `spotify` (shelved) |
+| **The shell** | `shell` (main loop), `launcher`, `transition`, `flight`, `stats`, `title`, `power`, `boot` |
+
+### Where to go for...
+
+| To change... | Look in |
+|---|---|
+| An app | `overlay/usr/local/lib/trendos/tos/apps/` (Calculator's real code: `native/libtrend/src/apps/`) |
+| Anything that draws too slowly | `native/libtrend/` |
+| How the phone starts | `bootimg/ramdisk/init`, then `overlay/etc/init.d/` |
+| Boot animation or charging screen | `native/boot/`, then rebuild the boot image |
+| The kernel | `kernel/` |
 
 ## Ideas for later
 

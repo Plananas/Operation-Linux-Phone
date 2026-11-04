@@ -1,12 +1,12 @@
 #!/bin/sh
 # Deploy the TREND OS userland (shell, helpers, services) to the phone, rebuild the C renderer
 # and restart the shell. Boot-image parts (ramdisk init, bootanim, charger) are NOT touched:
-# rebuild those with tools/native/mkramdisk.py + tools/repack_keep_dt.py (see PLAN.md).
+# rebuild those with bootimg/mkramdisk.py + bootimg/repack_keep_dt.py (see PLAN.md).
 #   [SPOTIFY=1] tools/deploy.sh [user@host]   (default root@192.168.42.129, the USB link; SPOTIFY=1 re-enables the shelved Spotify service)
 set -e
 HOST=${1:-root@192.168.42.129}
 cd "$(dirname "$0")/.."
-O=tools/native/alpine-overlay
+O=overlay
 FILES="usr/local/bin/trendos.py usr/local/bin/mksound.py usr/local/bin/mkcharger.py
        usr/local/lib/trendos/tos usr/local/sbin etc/init.d/bootscreen etc/init.d/usbnet etc/local.d
        etc/init.d/spotify etc/init.d/wifi etc/init.d/timesync etc/init.d/btuart etc/init.d/btaudio etc/conf.d/hwclock etc/timezone
@@ -30,6 +30,7 @@ cd /
 rm -rf /tmp/libtrend-src /usr/local/lib/trendos/librender.so
 find /usr/local/lib/trendos -name __pycache__ -type d -exec rm -rf {} +
 rm -f /usr/local/bin/cube.py
+(cd /usr/local/lib/trendos/tos && rm -f fb.py inputdev.py fm.py btchip.py audio.py bluetooth.py sshmon.py)   # moved to tos/hw/
 rc-service bootscreen restart >/dev/null
 if [ "$SPOTIFY" = 1 ] && [ -x /usr/local/bin/go-librespot ]; then
 	apk info -e alsa-lib flac-libs mpg123-libs libvorbis libogg >/dev/null || apk add -q alsa-lib flac-libs mpg123-libs libvorbis libogg

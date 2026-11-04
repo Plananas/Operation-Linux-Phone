@@ -5,7 +5,7 @@
 | `libtrend/` | The C core: pixels, 2D drawing, 3D meshes, visualisers, apps | Shared library, called from Python |
 | `boot/` | `bootanim`, `charger`, `fbpan`: small static programs in the ramdisk | Standalone, before Python exists |
 
-Our kernel is the other C in the project. It's built from Samsung's source (`tools/kernel/`).
+Our kernel is the other C in the project. It's built from Samsung's source (`kernel/`).
 
 ## Where the line sits
 

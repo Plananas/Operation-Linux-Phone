@@ -1,0 +1,11 @@
+#!/bin/sh
+# Bluetooth on: power the Broadcom chip, load its firmware patch, set the phone's own address
+# (from Samsung's efs), switch the UART to 3 Mbaud
+# (tos/hw/btchip.py), then hand the UART to the kernel's Bluetooth stack as hci0 (btattach keeps
+# running and holds it). Supervised by the OpenRC service "btuart". The FM radio keeps working:
+# with hci0 present it sends its commands through BlueZ instead of the raw UART.
+set -e
+python3 -c 'import sys; sys.path.insert(0, "/usr/local/lib/trendos")
+from tos.hw import btchip
+btchip.boot_raw(btchip.FAST_BAUD, btchip.bd_addr()).close()'
+exec btattach -B /dev/ttyS0 -P h4 -S 3000000

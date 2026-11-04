@@ -1,6 +1,6 @@
 # Stock firmware is too big for GitHub (>100MB) - re-download from samfw.com
-firmware/*.zip
-firmware/extracted/*.tar.md5
+firmware/stock/*.zip
+firmware/stock/*.tar.md5
 
 # Personal phone storage backup
 backup/sdcard/
@@ -15,5 +15,5 @@ backup/phone-image-*/
 
 # BootROM read-back test output
 backup/bootrom-read-*/
-# kernel test build output (tools/kernel/build.sh); released images are boot-nativeN.img
-firmware/extracted/boot-kernel-test.img
+# kernel test build output (kernel/build.sh); released images are boot-nativeN.img
+firmware/trendos/boot-kernel-test.img

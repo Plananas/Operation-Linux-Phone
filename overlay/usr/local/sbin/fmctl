@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""FM radio from the shell: fmctl on [MHz] | tune MHz | off  (driver: tos/hw/fm.py)."""
+import sys
+sys.path.insert(0, "/usr/local/lib/trendos")
+from tos.hw.fm import main
+
+main(sys.argv[1:])
