@@ -1,14 +1,15 @@
 """Music: plays files from /data/music, and carries on when the app is closed.
 
-The app is C: native/libtrend/src/apps/music/music.c (touch) and music_view.c (drawing), and native/player/
+The app is C: native/libtrend/src/apps/music/ (touch, drawing, the visualiser) and native/player/
 (finding, decoding and playing, on its own thread). This class connects them to the shell and hands
 over the fonts, which PIL rasterises once.
 """
 import numpy as np
 
 from ... import canvas, native
-from ...config import ACCENT, APP_H, MUSIC_DIR, PALETTE, RED, TOP, W
+from ...config import ACCENT, APP_H, CH, CW, MUSIC_DIR, NS, PALETTE, RED, TOP, W
 from ...hw import audio
+from ...render import TILES
 from ..base import App
 
 ELLIPSIS_SLOT = 0x85                            # native/libtrend/include/trend/apps/music.h
@@ -19,7 +20,7 @@ NOT_INSTALLED = "Player not installed: run tools/deploy.sh"
 
 def _theme():
     tables = [canvas.font_table(size, LATIN1, {ELLIPSIS_SLOT: "…"}) for size in FONT_SIZES]
-    return native.music_theme(tables, ACCENT, PALETTE[RED])
+    return native.music_theme(tables, ACCENT, PALETTE[RED], TILES, CW, CH, NS)
 
 
 class MusicApp(App):
@@ -32,6 +33,7 @@ class MusicApp(App):
         self._player = None
         self._theme = None
         self._buf = None
+        self._viz = native.music_viz_new()
 
     def on_open(self):
         if self._player is None:
@@ -68,5 +70,5 @@ class MusicApp(App):
         if self._buf is None:
             self._theme = _theme()
             self._buf = np.zeros((APP_H, W, 4), np.uint8)
-        native.music_render(self._state, self._status, self._library, self._theme, self._buf)
+        native.music_render(self._state, self._status, self._library, self._viz, self._theme, now, self._buf)
         return self._buf

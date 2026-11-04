@@ -542,7 +542,7 @@ static tr_music_cmd music_tap(tr_music *s, const tr_music_status *st, int x, int
 
 static void test_music_touch(void)
 {
-	enum { KEY_Y = 290, ROW0 = 380, ROW_H = 44, BAR_Y = 203 };
+	enum { KEY_Y = 336, ROW0 = 426, ROW_H = 44, BAR_Y = 249 };
 	tr_music *s = malloc(tr_music_size());
 	tr_music_init(s);
 	tr_music_status st = music_status(20);
@@ -571,9 +571,9 @@ static void test_music_touch(void)
 	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0 + 100);
 	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 104);
 	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 104).kind == TR_CMD_PLAY_TRACK);
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0 + 300);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 300 - 2 * ROW_H);
-	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 300 - 2 * ROW_H).kind == TR_CMD_NONE);
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0 + 250);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 250 - 2 * ROW_H);
+	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 250 - 2 * ROW_H).kind == TR_CMD_NONE);
 	c = music_tap(s, &st, 200, ROW0);                               /* the list has moved 2 rows */
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
 
@@ -586,7 +586,7 @@ static void test_music_touch(void)
 	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0);
 	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 - 5000);
 	tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 - 5000);
-	c = music_tap(s, &st, 200, ROW0 + 7 * ROW_H);
+	c = music_tap(s, &st, 200, ROW0 + 6 * ROW_H);
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 19);
 
 	/* Seeking: only with a known length, dragged anywhere, clamped to the bar. */
@@ -624,7 +624,7 @@ static void test_music_follow_and_key(void)
 	/* The track moving off screen brings it back. */
 	st.track = 15;
 	tr_music_follow(s, s, &st);
-	tr_music_cmd c = music_tap(s, &st, 200, 366 + 7 * 44 + 2);
+	tr_music_cmd c = music_tap(s, &st, 200, 412 + 6 * 44 + 2);
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 15);
 
 	/* Stable while not playing, whatever the time. */
@@ -647,7 +647,7 @@ static void test_music_render(void)
 	static const uint8_t ink[64] = { 255, 200, 100, 50 };
 	for (int i = 0; i < 256; i++)
 		font[i] = (tr_glyph){ ink, 8, 8, 0, -2, 9.5f };
-	const tr_music_theme theme = { font, font, font, font, RED, BLUE };
+	const tr_music_theme theme = { font, font, font, font, RED, BLUE, { NULL, 0, 0 }, 0 };
 	enum { W = 480, H = 734 };
 	static uint32_t px[H * W];
 	static tr_music_library lib;
@@ -657,7 +657,7 @@ static void test_music_render(void)
 
 	/* Empty, then full of the longest names, with every track in turn playing. */
 	tr_music_status st = music_status(0);
-	tr_music_render(s, &st, &lib, &theme, dst);
+	tr_music_render(s, &st, &lib, NULL, &theme, dst);
 	lib.n = TR_MUSIC_MAX_TRACKS;
 	st.n_tracks = lib.n;
 	for (int i = 0; i < lib.n; i++) {
@@ -673,20 +673,127 @@ static void test_music_render(void)
 	for (st.track = 0; st.track < lib.n; st.track += 37) {
 		st.position = st.track * 300.0;                 /* past the end, too */
 		tr_music_follow(s, s, &st);
-		tr_music_render(s, &st, &lib, &theme, dst);
+		tr_music_render(s, &st, &lib, NULL, &theme, dst);
 	}
 
 	/* The key being held and the playing track both show. */
 	st.track = 0;
 	tr_music_follow(s, s, &st);
-	tr_music_render(s, &st, &lib, &theme, dst);
-	const uint32_t idle_key = at(dst, 40, 260);
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 40, 260);
-	tr_music_render(s, &st, &lib, &theme, dst);
-	CHECK(at(dst, 40, 260) != idle_key);
-	tr_music_touch(s, s, &st, TR_MUSIC_UP, 40, 500);
-	CHECK(at(dst, 20, 380) == RED);                         /* the marker on the current row */
+	tr_music_render(s, &st, &lib, NULL, &theme, dst);
+	const uint32_t idle_key = at(dst, 40, 306);
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 40, 306);
+	tr_music_render(s, &st, &lib, NULL, &theme, dst);
+	CHECK(at(dst, 40, 306) != idle_key);
+	tr_music_touch(s, s, &st, TR_MUSIC_UP, 40, 600);
+	CHECK(at(dst, 20, 426) == RED);                         /* the marker on the current row */
 	CHECK(at(dst, 0, 0) == 0xff000000u);
+	free(s);
+}
+
+static void test_music_viz(void)
+{
+	enum { W = 480, H = 734, TAB_Y = 30, SONG_X = 100, VIZ_X = 350, PICTURE_Y0 = 58, PICTURE_Y1 = 520 };
+	static tr_glyph font[256];
+	static const uint8_t ink[64] = { 255, 200, 100, 50 };
+	for (int i = 0; i < 256; i++)
+		font[i] = (tr_glyph){ ink, 8, 8, 0, -2, 9.5f };
+	/* An atlas whose every tile is one flat value, saying which colour it is. */
+	enum { COLOURS = 10, SHADES = 13, CW = 8, CH = 12, TILES = COLOURS * SHADES };
+	static uint32_t tiles[TILES][CH][CW];
+	for (int t = 0; t < TILES; t++)
+		for (int y = 0; y < CH; y++)
+			for (int x = 0; x < CW; x++)
+				tiles[t][y][x] = 0xff000000u | (uint32_t)(t / SHADES + 1);
+	const tr_music_theme theme = { font, font, font, font, RED, BLUE, { (const uint8_t *)tiles, CH, CW }, SHADES };
+	static uint32_t px[H * W], before[H * W];
+	static tr_music_library lib;
+	const tr_surface dst = { (uint8_t *)px, W * 4, W, H };
+	tr_music *s = malloc(tr_music_size());
+	tr_music_viz *v = malloc(tr_music_viz_size());
+	tr_music_init(s);
+	tr_music_viz_init(v);
+	tr_music_status st = music_status(3);
+	st.duration = 100.0;
+
+	/* The tabs switch, and ask nothing of the player. Sliding off one cancels it. */
+	CHECK(!tr_music_showing_viz(s));
+	CHECK(music_tap(s, &st, VIZ_X, TAB_Y).kind == TR_CMD_NONE);
+	CHECK(tr_music_showing_viz(s));
+	CHECK(music_tap(s, &st, VIZ_X, TAB_Y).kind == TR_CMD_NONE);    /* already there */
+	CHECK(tr_music_showing_viz(s));
+	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, SONG_X, TAB_Y);
+	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, SONG_X, 400);
+	tr_music_touch(s, s, &st, TR_MUSIC_UP, SONG_X, 400);
+	CHECK(tr_music_showing_viz(s));
+
+	/* The controls still work on the visualiser tab, in their own places. The list isn't there. */
+	CHECK(music_tap(s, &st, 240, 680).kind == TR_CMD_TOGGLE);
+	CHECK(music_tap(s, &st, 90, 680).kind == TR_CMD_PREV);
+	CHECK(music_tap(s, &st, 380, 680).kind == TR_CMD_NEXT);
+	tr_music_cmd c = music_tap(s, &st, 240, 593);
+	CHECK(c.kind == TR_CMD_SEEK && c.arg == 500);
+	CHECK(music_tap(s, &st, 240, 300).kind == TR_CMD_NONE);        /* the picture */
+
+	/* Back to the song tab: the same places do what they do there. */
+	music_tap(s, &st, SONG_X, TAB_Y);
+	CHECK(!tr_music_showing_viz(s));
+	CHECK(music_tap(s, &st, 240, 336).kind == TR_CMD_TOGGLE);
+	music_tap(s, &st, VIZ_X, TAB_Y);
+
+	/* Loud music, at extremes that must stay in bounds, shows the whole palette. */
+	st.state = TR_PLAYER_PLAYING;
+	double now = 100.0;
+	for (int f = 0; f < 200; f++) {
+		for (int i = 0; i < TR_MUSIC_SCOPE; i++)
+			st.scope[i] = i % 54 < 27 ? 32767 : -32768;
+		now += 1.0 / 30.0;
+		tr_music_viz_advance(v, &st, now);
+		tr_music_render(s, &st, &lib, v, &theme, dst);
+	}
+	/* All the colours of the rainbow are in the picture, and white on top of the bars. */
+	int seen[COLOURS + 1] = { 0 };
+	for (int y = PICTURE_Y0; y < PICTURE_Y1; y++)
+		for (int x = 0; x < W; x++) {
+			const uint32_t p = at(dst, x, y);
+			CHECK((p >> 24) == 0xff);
+			if ((p & 0xffffff) <= COLOURS)
+				seen[p & 0xffffff]++;
+		}
+	static const int RAINBOW_COLOURS[] = { 0, 6, 3, 1, 5, 2, 4 };
+	for (int i = 0; i < 7; i++)
+		CHECK(seen[RAINBOW_COLOURS[i] + 1] > 0);
+	CHECK(seen[7 + 1] > 0);
+
+	/* Paused: the picture holds still, and the screen isn't redrawn for it. */
+	memcpy(before, px, sizeof(px));
+	st.state = TR_PLAYER_PAUSED;
+	const uint64_t key_paused = tr_music_frame_key(s, &st, now + 0.1);
+	CHECK(tr_music_frame_key(s, &st, now + 0.1 + 0.0001) == key_paused);
+	for (int f = 0; f < 10; f++) {
+		now += 1.0 / 30.0;
+		tr_music_viz_advance(v, &st, now);
+	}
+	tr_music_render(s, &st, &lib, v, &theme, dst);
+	CHECK(memcmp(before + PICTURE_Y0 * W, px + PICTURE_Y0 * W, (size_t)(PICTURE_Y1 - PICTURE_Y0) * W * 4) == 0);
+
+	/* Playing, it moves on, and the screen key asks for that. */
+	st.state = TR_PLAYER_PLAYING;
+	CHECK(tr_music_frame_key(s, &st, 1.0) != tr_music_frame_key(s, &st, 1.04));
+	now += 1.0 / 30.0;
+	tr_music_viz_advance(v, &st, now);
+	tr_music_render(s, &st, &lib, v, &theme, dst);
+	CHECK(memcmp(before + PICTURE_Y0 * W, px + PICTURE_Y0 * W, (size_t)(PICTURE_Y1 - PICTURE_Y0) * W * 4) != 0);
+
+	/* After a long silence the levels are down, and a surface of any size is safe. */
+	tr_music_status quiet = music_status(0);
+	quiet.state = TR_PLAYER_STOPPED;
+	for (int f = 0; f < 300; f++) {
+		now += 1.0 / 30.0;
+		tr_music_viz_advance(v, &quiet, now);
+	}
+	const tr_surface tiny = { (uint8_t *)px, W * 4, 40, 30 };
+	tr_music_viz_draw(v, &theme, tiny);
+	free(v);
 	free(s);
 }
 
@@ -713,6 +820,7 @@ int main(void)
 	test_music_touch();
 	test_music_follow_and_key();
 	test_music_render();
+	test_music_viz();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -13,9 +13,11 @@
 #include <stdint.h>
 
 #include "trend/draw.h"
+#include "trend/mesh.h"
 #include "trend/types.h"
 
 typedef struct tr_music tr_music;
+typedef struct tr_music_viz tr_music_viz;
 
 enum {
 	TR_MUSIC_MAX_TRACKS = 512,
@@ -67,6 +69,8 @@ typedef struct {
 typedef struct {
 	const tr_glyph *font16, *font17, *font22, *font25;
 	tr_colour accent, error;
+	tr_atlas atlas;                /* the home screen icons' shaded characters, for the visualiser */
+	int shades;                    /* characters per colour in the atlas */
 } tr_music_theme;
 
 size_t tr_music_size(void);
@@ -91,9 +95,18 @@ void tr_music_follow(const tr_music *in, tr_music *out, const tr_music_status *s
 /* Changes whenever the screen needs redrawing; stable unless music is playing. */
 uint64_t tr_music_frame_key(const tr_music *s, const tr_music_status *status, double now);
 
-/* Draw the whole app area. */
+/* Draw the whole app area, on whichever tab is showing. */
 void tr_music_render(const tr_music *s, const tr_music_status *status, const tr_music_library *library,
-		     const tr_music_theme *theme, tr_surface dst);
+		     const tr_music_viz *viz, const tr_music_theme *theme, tr_surface dst);
+
+/* The visualiser tab. Its state remembers the last few moments of music: allocate
+ * tr_music_viz_size() bytes. Advancing updates it in place: it moves on as time passes, however often
+ * it's called, and holds still while paused. Drawing fills dst with the picture. */
+int tr_music_showing_viz(const tr_music *s);
+size_t tr_music_viz_size(void);
+void tr_music_viz_init(tr_music_viz *out);
+void tr_music_viz_advance(tr_music_viz *v, const tr_music_status *status, double now);
+void tr_music_viz_draw(const tr_music_viz *v, const tr_music_theme *theme, tr_surface dst);
 
 /* Text for the screen, shared with the player. Both always terminate out. */
 

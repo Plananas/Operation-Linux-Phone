@@ -66,7 +66,7 @@ class MusicCmd(Structure):
 
 
 class MusicTheme(Structure):
-    _fields_ = [("fonts", c_void_p * 4), ("accent", c_uint32), ("error", c_uint32)]
+    _fields_ = [("fonts", c_void_p * 4), ("accent", c_uint32), ("error", c_uint32), ("atlas", Atlas), ("shades", c_int)]
 
 
 _vp, _i, _f = c_void_p, c_int, c_float
@@ -104,7 +104,11 @@ _SIGNATURES = {
     "tr_music_on_key":      (MusicCmd, [_i, _i]),
     "tr_music_follow":      (None, [_vp, _vp, _vp]),
     "tr_music_frame_key":   (c_uint64, [_vp, _vp, c_double]),
-    "tr_music_render":      (None, [_vp, _vp, _vp, _vp, Surface]),
+    "tr_music_render":      (None, [_vp, _vp, _vp, _vp, _vp, Surface]),
+    "tr_music_showing_viz": (_i, [_vp]),
+    "tr_music_viz_size":    (c_size_t, []),
+    "tr_music_viz_init":    (None, [_vp]),
+    "tr_music_viz_advance": (None, [_vp, _vp, c_double]),
 }
 
 # libtrendplay: loaded when Music first opens, and allowed to be missing.
@@ -346,10 +350,11 @@ def music_library_new():
     return _aligned(_lib.tr_music_library_size())
 
 
-def music_theme(tables, accent, error):
-    """The fonts (sizes 16, 17, 22, 25, in order) and colours. tables must outlive it."""
+def music_theme(tables, accent, error, tiles, cw, ch, shades):
+    """The fonts (sizes 16, 17, 22, 25, in order), colours, and the icons' character tiles. tables and
+    tiles must outlive it."""
     fonts = (c_void_p * 4)(*map(ctypes.addressof, tables))
-    return MusicTheme(fonts, colour(accent), colour(error))
+    return MusicTheme(fonts, colour(accent), colour(error), atlas(tiles, cw, ch), shades)
 
 
 def music_touch(state, status, event, x, y):
@@ -371,8 +376,17 @@ def music_frame_key(state, status, now):
     return _lib.tr_music_frame_key(state, status, now)
 
 
-def music_render(state, status, library, theme, dst):
-    _lib.tr_music_render(state, status, library, ctypes.byref(theme), surface(dst))
+def music_viz_new():
+    viz = _aligned(_lib.tr_music_viz_size())
+    _lib.tr_music_viz_init(viz)
+    return viz
+
+
+def music_render(state, status, library, viz, theme, now, dst):
+    """Draw the whole app area, moving the visualiser on to now if it's showing."""
+    if _lib.tr_music_showing_viz(state):
+        _lib.tr_music_viz_advance(viz, status, now)
+    _lib.tr_music_render(state, status, library, viz, ctypes.byref(theme), surface(dst))
 
 
 def player_new(music_dir):

@@ -8,7 +8,8 @@
 #define VOL_DOWN_KEY 114
 #define VOL_UP_KEY 115
 #define TAP_SLOP 10                    /* pixels a finger may wander and still be a tap */
-#define PLAY_TICKS_PER_SECOND 20.0     /* how often the visualiser redraws */
+#define PLAY_TICKS_PER_SECOND 20.0     /* how often the waveform redraws */
+#define VIZ_TICKS_PER_SECOND 30.0      /* how often the visualiser does */
 
 static const tr_music_cmd NO_CMD = { TR_CMD_NONE, 0 };
 
@@ -19,7 +20,12 @@ size_t tr_music_library_size(void) { return sizeof(tr_music_library); }
 void tr_music_init(tr_music *out)
 {
 	memset(out, 0, sizeof(*out));
-	out->pressed_key = out->pressed_row = out->followed_track = -1;
+	out->pressed_key = out->pressed_row = out->pressed_tab = out->followed_track = -1;
+}
+
+int tr_music_showing_viz(const tr_music *s)
+{
+	return s->showing_viz;
 }
 
 void tr_music_status_init(tr_music_status *out, const char *error)
@@ -32,9 +38,17 @@ void tr_music_status_init(tr_music_status *out, const char *error)
 
 /* ---- geometry ---- */
 
-static int key_at(int x, int y)
+static int tab_at(int x, int y)
 {
-	if (y < KEY_Y0 || y >= KEY_Y1 || x < KEY_X0)
+	if (y < TAB_Y0 || y >= TAB_Y1 || x < TAB_X0 || x >= TAB_X1)
+		return -1;
+	return x >= TAB_MID;
+}
+
+static int key_at(const tr_music *s, int x, int y)
+{
+	const int y0 = music_layout_of(s->showing_viz).key_y0;
+	if (y < y0 || y >= y0 + KEY_H || x < KEY_X0)
 		return -1;
 	const int i = (x - KEY_X0) / (KEY_W + KEY_GAP);
 	const int inside = (x - KEY_X0) % (KEY_W + KEY_GAP) < KEY_W;
@@ -56,18 +70,25 @@ static int row_at(const tr_music *s, int n_tracks, int y)
 
 /* ---- touches ---- */
 
+static int on_bar(const tr_music *s, int y)
+{
+	const music_layout l = music_layout_of(s->showing_viz);
+	return y >= l.bar_y0 - 12 && y < l.time_y + 22;
+}
+
 static void touch_down(tr_music *s, const tr_music_status *st, int x, int y)
 {
 	s->touch_y = y;
 	s->scroll_at_touch = s->scroll;
 	s->moved = 0;
-	s->pressed_key = key_at(x, y);
+	s->pressed_tab = tab_at(x, y);
+	s->pressed_key = key_at(s, x, y);
 	s->pressed_row = -1;
 	s->drag = DRAG_NONE;
-	if (y >= BAR_HIT_Y0 && y < BAR_HIT_Y1 && st->duration > 0.0) {
+	if (on_bar(s, y) && st->duration > 0.0) {
 		s->drag = DRAG_SEEK;
 		s->seek_x = tr_clamp(x, BAR_X0, BAR_X1);
-	} else if (y >= ROWS_Y0 && y < ROWS_Y1) {
+	} else if (!s->showing_viz && y >= ROWS_Y0 && y < ROWS_Y1) {
 		s->drag = DRAG_LIST;
 		s->pressed_row = row_at(s, st->n_tracks, y);
 	}
@@ -75,6 +96,8 @@ static void touch_down(tr_music *s, const tr_music_status *st, int x, int y)
 
 static void touch_move(tr_music *s, const tr_music_status *st, int x, int y)
 {
+	if (s->pressed_tab >= 0 && tab_at(x, y) != s->pressed_tab)
+		s->pressed_tab = -1;
 	if (s->drag == DRAG_SEEK) {
 		s->seek_x = tr_clamp(x, BAR_X0, BAR_X1);
 	} else if (s->drag == DRAG_LIST) {
@@ -85,7 +108,7 @@ static void touch_move(tr_music *s, const tr_music_status *st, int x, int y)
 			s->pressed_row = -1;
 			s->scroll = tr_clamp(s->scroll_at_touch - dy, 0, max_scroll(st->n_tracks));
 		}
-	} else if (s->pressed_key >= 0 && key_at(x, y) != s->pressed_key) {
+	} else if (s->pressed_key >= 0 && key_at(s, x, y) != s->pressed_key) {
 		s->pressed_key = -1;
 	}
 }
@@ -93,6 +116,11 @@ static void touch_move(tr_music *s, const tr_music_status *st, int x, int y)
 static tr_music_cmd touch_up(tr_music *s)
 {
 	tr_music_cmd cmd = NO_CMD;
+	if (s->pressed_tab >= 0) {
+		s->showing_viz = s->pressed_tab;
+		s->pressed_tab = -1;
+		return cmd;
+	}
 	if (s->drag == DRAG_SEEK) {
 		cmd = (tr_music_cmd){ TR_CMD_SEEK, (s->seek_x - BAR_X0) * 1000 / (BAR_X1 - BAR_X0) };
 	} else if (s->pressed_row >= 0) {
@@ -179,7 +207,10 @@ uint64_t tr_music_frame_key(const tr_music *s, const tr_music_status *st, double
 	h = mix_text(h, st->title);
 	h = mix_text(h, st->artist);
 	h = mix_text(h, st->error);
-	if (st->state == TR_PLAYER_PLAYING)
+	/* The visualiser moves unless paused, and then it only needs an occasional redraw. */
+	if (s->showing_viz)
+		h = mix_in(h, (uint64_t)(now * (st->state == TR_PLAYER_PAUSED ? 1.0 : VIZ_TICKS_PER_SECOND)));
+	else if (st->state == TR_PLAYER_PLAYING)
 		h = mix_in(h, (uint64_t)(now * PLAY_TICKS_PER_SECOND));
 	return h;
 }

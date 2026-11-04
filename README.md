@@ -37,7 +37,9 @@ title bar.
   (subfolders are fine). Copy them over USB: `scp song.mp3 root@192.168.42.129:/data/music/`, then
   reopen the app. Tap a track to play it; drag the bar to seek; the **volume keys** set the volume
   while the app is open. Music keeps playing when you close the app or the screen turns off, and
-  moves on through the list until it runs out. It plays through Bluetooth if connected, otherwise
+  moves on through the list until it runs out. The **song / visualiser** tabs at the top switch
+  between the track list and an abstract 3D visualiser in the same ASCII style as the icons, moving
+  with the music, with the title and controls still underneath it. It plays through Bluetooth if connected, otherwise
   wired headphones, otherwise the speaker. Losing headphones or Bluetooth pauses it, and an alarm or
   the Radio pauses it too.
 - **Clock** (the clock face) — big glowing time, date, and up to 4 alarms. Tap **+ new alarm**
