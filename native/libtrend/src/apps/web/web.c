@@ -282,6 +282,11 @@ static void reveal_advance(tr_web *s, const web_doc *d, double dt)
 			if (s->reveal_budget < 1.0)
 				return;
 			s->reveal_budget -= 1.0 + pause_after(r, s->reveal_cells);
+			if (s->n_said < (int)sizeof(s->said)) {
+				int ch = ' ';
+				row_cells(r, s->reveal_cells, &ch);
+				s->said[s->n_said++] = (uint8_t)ch;
+			}
 			s->reveal_cells++;
 		} else if (s->reveal_row < last) {
 			if (!cells)
@@ -303,6 +308,14 @@ static void follow_talk(tr_web *s, const tr_web_status *st, double now)
 		s->talk_until = now + TALK_TAIL_S;
 	if (!d->n_rows)
 		s->talk_until = 0.0;
+}
+
+int tr_web_take_said(tr_web *s, uint8_t *out, int cap)
+{
+	const int n = tr_min(s->n_said, cap);
+	memcpy(out, s->said, (size_t)n);
+	s->n_said = 0;
+	return n;
 }
 
 uint64_t tr_web_advance(tr_web *s, const tr_web_status *st, double now)

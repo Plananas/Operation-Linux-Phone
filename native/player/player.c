@@ -643,6 +643,14 @@ static void wait_for_release(tr_player *p, unsigned asked)
 			break;
 }
 
+int tr_player_is_playing(tr_player *p)
+{
+	pthread_mutex_lock(&p->lock);
+	const int playing = p->status.state == TR_PLAYER_PLAYING;
+	pthread_mutex_unlock(&p->lock);
+	return playing;
+}
+
 void tr_player_command(tr_player *p, tr_music_cmd cmd)
 {
 	pthread_mutex_lock(&p->lock);

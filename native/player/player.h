@@ -26,6 +26,9 @@ void tr_player_command(tr_player *p, tr_music_cmd cmd);
 
 void tr_player_status(tr_player *p, tr_music_status *out);
 
+/* Whether it's playing, and so holding the audio device. */
+int tr_player_is_playing(tr_player *p);
+
 /* Update out if the track list has changed since it was last copied. */
 void tr_player_library(tr_player *p, tr_music_library *out);
 

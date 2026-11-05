@@ -138,6 +138,7 @@ _SIGNATURES = {
     "tr_web_scroll_of":     (_i, [_vp, _i]),
     "tr_web_set_compose":   (None, [_vp, c_char_p, c_char_p]),
     "tr_web_advance":       (c_uint64, [_vp, _vp, c_double]),
+    "tr_web_take_said":     (_i, [_vp, _vp, _i]),
     "tr_web_render":        (None, [_vp, _vp, _vp, c_double, Surface]),
     "tr_music_size":        (c_size_t, []),
     "tr_music_status_size": (c_size_t, []),
@@ -159,6 +160,7 @@ _PLAYER_SIGNATURES = {
     "tr_player_new":     (_vp, [c_char_p, c_char_p]),
     "tr_player_command": (None, [_vp, MusicCmd]),
     "tr_player_status":  (None, [_vp, _vp]),
+    "tr_player_is_playing": (_i, [_vp]),
     "tr_player_library": (None, [_vp, _vp]),
 }
 
@@ -443,6 +445,15 @@ def web_advance(state, status, now):
     return _lib.tr_web_advance(state, status, now)
 
 
+_said = ctypes.create_string_buffer(64)
+
+
+def web_take_said(state):
+    """The letters Blip has said since the last call, for its voice."""
+    n = _lib.tr_web_take_said(state, _said, len(_said))
+    return _said.raw[:n] if n else b""
+
+
 def web_render(state, status, theme, now, dst):
     _lib.tr_web_render(state, status, ctypes.byref(theme), now, surface(dst))
 
@@ -579,6 +590,10 @@ def player_command(player, cmd):
 
 def player_status(player, status):
     _player_lib.tr_player_status(player, status)
+
+
+def player_is_playing(player):
+    return _player_lib.tr_player_is_playing(player)
 
 
 def player_library(player, library):

@@ -17,6 +17,7 @@ import numpy as np
 from ... import canvas, native
 from ...config import (ACCENT, APP_H, CAM_Z, CH, CW, LIGHT, NS, PALETTE, RED, TOP, W, WEB_API_BASE, WEB_KEY_FILE,
                        WEB_MODEL, WEB_USER, WEBD)
+from ...hw.voice import Voice
 from ...keyboard import KB_Y, Keyboard
 from ...models import MASCOT_POSES, get
 from ...render import TILES
@@ -105,6 +106,7 @@ class WebApp(App):
         # the second core. The shell waits for it (finish_setup) before its first frame.
         self._mascot = threading.Thread(target=lambda: [get(name) for name in MASCOT_POSES], daemon=True)
         self._mascot.start()
+        self._voice = Voice()
         self._kb = None
         self._field = None                  # the form field being typed into; None means the input box
         self._theme = None
@@ -116,6 +118,9 @@ class WebApp(App):
     def on_open(self):
         if not self._agent.start() or not self._browser.start():
             native.web_feed_error(self._status, "not installed: run tools/deploy.sh")
+
+    def on_close(self):
+        self._voice.stop()
 
     def background(self, now):
         self._pump()
@@ -209,6 +214,9 @@ class WebApp(App):
     def key(self, now):
         self._pump()
         frame = native.web_advance(self._state, self._status, now)
+        said = native.web_take_said(self._state)
+        if said and native.web_tab(self._state) == native.WEB_CHAT:
+            self._voice.say(said)
         return (frame, self._kb.key(now)) if self._kb is not None else frame
 
     def _make_theme(self):

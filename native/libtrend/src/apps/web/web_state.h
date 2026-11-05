@@ -57,6 +57,8 @@ struct tr_web {
 	int reveal_row, reveal_cells;
 	double reveal_budget;
 	double talk_until;             /* the mascot talks until then */
+	uint8_t said[64];              /* characters written out since tr_web_take_said; any more than this are dropped */
+	int n_said;
 
 	/* the touch in progress */
 	int down, moved, pressed;

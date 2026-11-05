@@ -1144,6 +1144,39 @@ static int said_cell(const uint32_t *px, int row, int col)
 	return (px[(size_t)(CHAT_Y + row * WEB_ROW_H + 5) * 480 + (size_t)(WEB_MARGIN + col * WEB_ADVANCE + 2)] & 0xffffff) == TEXT_RGB;
 }
 
+/* Blip's voice gets what it writes out, and nothing else. */
+static void test_web_said(void)
+{
+	static uint8_t frame[1 << 16];
+	tr_web_status *st = calloc(1, tr_web_status_size());
+	tr_web *s = calloc(1, tr_web_size());
+	tr_web_init(s);
+	tr_web_status_init(st);
+	static const uint8_t asked[] = { WEB_S_USER, '>', ' ', 'h', 'i' };
+	char line[41];
+	memset(line, 'w', 40);
+	size_t n = put_row(frame, 0, asked, sizeof(asked));
+	n += put_row(frame + n, 1, line, 40);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+
+	uint8_t said[64];
+	tr_web_advance(s, st, 1.0);
+	CHECK(tr_web_take_said(s, said, sizeof(said)) == 0);
+	tr_web_advance(s, st, 1.1);
+	int got = tr_web_take_said(s, said, sizeof(said));
+	CHECK(got > 0 && got < 40);
+	for (int i = 0; i < got; i++)
+		CHECK(said[i] == 'w');
+	CHECK(tr_web_take_said(s, said, sizeof(said)) == 0);
+
+	/* Asking for fewer than there are drops the rest, rather than going over. */
+	tr_web_advance(s, st, 1.2);
+	CHECK(tr_web_take_said(s, said, 1) == 1);
+	CHECK(tr_web_take_said(s, said, sizeof(said)) == 0);
+	free(s);
+	free(st);
+}
+
 static void test_web_writing_out(void)
 {
 	static tr_glyph glyphs[256];
@@ -1303,6 +1336,7 @@ int main(void)
 	test_files_render();
 	test_web();
 	test_web_writing_out();
+	test_web_said();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

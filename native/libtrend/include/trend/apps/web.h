@@ -77,6 +77,10 @@ void tr_web_set_compose(tr_web *s, const char *text, const char *label);
 /* Move on to time now (flings, following the chat) and return a key that changes when a redraw is needed. */
 uint64_t tr_web_advance(tr_web *s, const tr_web_status *st, double now);
 
+/* The characters Blip has written out since the last call, for its voice: at most cap of them, in out. Returns how
+ * many. Words that are just there, such as the user's own, aren't included, and nor is a reply that's been skipped. */
+int tr_web_take_said(tr_web *s, uint8_t *out, int cap);
+
 /* Draw the whole app area. */
 void tr_web_render(const tr_web *s, const tr_web_status *st, const tr_web_theme *theme, double now, tr_surface dst);
 

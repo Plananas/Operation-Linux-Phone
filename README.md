@@ -16,7 +16,7 @@ A Samsung Galaxy Trend 2 Lite (SM-G318H, 2015) running its own small Linux syste
 
 ## Apps
 
-- **Web:** chat with Blip, an AI mascot that can search and read the web, with a small browser in the next tab. No JavaScript or cookies, so simple sites work best. The chat needs a key (below) and lasts until a restart.
+- **Web:** chat with Blip, an AI mascot that can search and read the web and babbles in chip sounds as it writes (quiet while music plays), with a small browser in the next tab. No JavaScript or cookies, so simple sites work best. The chat needs a key (below) and lasts until a restart.
 - **Calculator:** with history.
 - **Volume:** the volume keys set one volume for everything, from any screen, even with the screen off. Hold a key to keep going, or drag the bar that appears at the top. Alarms always ring at full volume.
 - **Radio:** FM. Plug in wired headphones first, because they're the antenna, even if you listen over Bluetooth.

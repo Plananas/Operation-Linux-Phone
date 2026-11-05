@@ -42,6 +42,7 @@ class MusicApp(App):
                 native.music_status_init(self._status, NOT_INSTALLED)
             else:
                 audio.on_take_output(self._release)
+                audio.on_music_playing(lambda: native.player_is_playing(self._player))
                 volume.on_change(self._set_volume)
                 self._set_volume(volume.level())
         else:

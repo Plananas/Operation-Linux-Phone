@@ -160,6 +160,8 @@ int main(void)
 	CHECK(st.title[0] == '\0' && st.position == 0.0 && st.track == -1);
 	CHECK(strcmp(st.error, "Can't read this music") == 0);
 
+	CHECK(!tr_player_is_playing(p));
+
 	/* Volume is set to a level, and stays in range. */
 	cmd(p, TR_CMD_VOLUME, 7);
 	tr_player_status(p, &st);
