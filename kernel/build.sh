@@ -12,6 +12,8 @@ docker image inspect trendos-kbuild >/dev/null 2>&1 || docker build -t trendos-k
 # our patches (idempotent): early TREND OS boot frame instead of the Samsung logo; always 3 fb pages
 cp kernel/trendos_logo.h $K/drivers/video/sprdfb/trendos_logo.h
 git -C $K apply --check ../../../kernel/trendos-logo.patch 2>/dev/null && git -C $K apply ../../../kernel/trendos-logo.patch
+# a core that was hot-plugged off must not be trusted to still hold a thread's NEON registers
+git -C $K apply --check ../../../kernel/vfp-hotplug.patch 2>/dev/null && git -C $K apply ../../../kernel/vfp-hotplug.patch
 mkdir -p $O
 cp kernel/trendos.config tools/ext/trendos.config
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD/tools/ext:/w" -w /w/kernel trendos-kbuild sh -c '

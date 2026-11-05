@@ -1,0 +1,15 @@
+diff --git a/arch/arm/vfp/vfpmodule.c b/arch/arm/vfp/vfpmodule.c
+index 5dfbb0b8..69116f04 100755
+--- a/arch/arm/vfp/vfpmodule.c
++++ b/arch/arm/vfp/vfpmodule.c
+@@ -642,7 +642,9 @@ static int vfp_hotplug(struct notifier_block *b, unsigned long action,
+ 	void *hcpu)
+ {
+ 	if (action == CPU_DYING || action == CPU_DYING_FROZEN) {
+-		vfp_force_reload((long)hcpu, current_thread_info());
++		/* The core is losing its registers. Whichever thread last used them must reload them,
++		 * and that isn't this one: here, current is the stopper thread. */
++		vfp_current_hw_state[(long)hcpu] = NULL;
+ 	} else if (action == CPU_STARTING || action == CPU_STARTING_FROZEN)
+ 		vfp_enable(NULL);
+ 	return NOTIFY_OK;
