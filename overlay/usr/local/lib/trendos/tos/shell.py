@@ -45,7 +45,17 @@ class Shell:
         boot.stop_bootanim()
         boot.play_startup_sound()
 
+    def prerender_apps(self):
+        """Each app's first render does its slow one-off setup. Do it now, while the ramdisk's loading
+        spin is still on screen: it's a separate program, so it keeps moving, and nothing has to stall
+        later for an app to open instantly."""
+        for en in self.entries:
+            if en.app is not None:
+                en.app.finish_setup()
+                en.app.render(time.monotonic())
+
     def run(self):
+        self.prerender_apps()
         self.take_over_from_boot()
         now = time.monotonic()
         self.start = self.last = self.last_input = now
@@ -64,7 +74,6 @@ class Shell:
         self.flight = None                     # the open app's icon flight (closing replays it)
         self.trans_live = None                 # carousel whose spin advances during a transition
         self.held_events = []                 # touches made while an app is sliding open
-        self.warm = [en.app for en in self.entries if en.app is not None]   # apps to pre-render
         self.page, self.frames, self.fps, self.fps_t0 = 1, 0, 0.0, now
         self.bg_apps = [en.app for en in self.entries if en.app is not None]
         self.next_bg = now
@@ -178,8 +187,6 @@ class Shell:
         if self.mode == "launcher":
             self.launcher.update(now, dt, blend)                      # frozen while not visible
             self.draw_launcher(buf, now, blend)
-            if self.warm and self.carousel_is_home and now - self.start > 6 and not self.launcher.busy:
-                self.warm.pop().render(now)       # pre-render one app per frame: instant first open
         elif self.mode == "app":
             self.clear_base(buf, "app")
             self.draw_region(buf, "app", self.app.key(now), lambda: self.app.render(now))

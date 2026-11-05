@@ -101,14 +101,17 @@ class WebApp(App):
         self._agent = _Webd(self._status, native.WEB_CHAT, [WEBD, "agent", "-u", WEB_USER, "-k", WEB_KEY_FILE,
                                                             "-a", WEB_API_BASE, "-m", WEB_MODEL])
         self._browser = _Webd(self._status, native.WEB_PAGE, [WEBD, "web", "-u", WEB_USER])
-        # The shell pre-renders every app while it starts, and the mascot takes a couple of seconds to build. That
-        # mustn't freeze the home screen, so it's built on the side and the screen stays blank if it's opened sooner.
+        # The mascot takes a couple of seconds to build, so it's built on the side while the other apps are made, on
+        # the second core. The shell waits for it (finish_setup) before its first frame.
         self._mascot = threading.Thread(target=lambda: [get(name) for name in MASCOT_POSES], daemon=True)
         self._mascot.start()
         self._kb = None
         self._field = None                  # the form field being typed into; None means the input box
         self._theme = None
         self._buf = None
+
+    def finish_setup(self):
+        self._mascot.join()
 
     def on_open(self):
         if not self._agent.start() or not self._browser.start():

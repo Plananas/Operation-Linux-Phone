@@ -24,6 +24,7 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, KERNEL p20, RECOVERY p21, system p24
 - **Wi-Fi**: `wifi-up` loads firmware from `/data/wifi`; **must `iw dev wlan0 set power_save off`** or DHCP never completes. Creds in `/etc/wpa_supplicant/wpa_supplicant.conf`.
 - **Font**: VT323 has no arrows or geometric glyphs: use ASCII or draw shapes. 3D atlas uses DejaVu (`gfx.art_font`).
 - **Perf**: home ~10 % of a core. `to_rgbx` ~14 ms per frame, mostly PIL: use `canvas`. Not yet moved to canvas: Clock, Wi-Fi, Bluetooth, SSH, power menu. Open: a shell that had been through several apps used 24.9 % with Calculator idle vs 8.1 % fresh (not traced; Radio alone isn't it). A7 is in-order with a weak prefetcher: hot full-frame loops need NEON unrolled x4 + `__builtin_prefetch`; benchmarks with constant args inline and lie. Frame copy 2.7-5 ms. Measure with `utime+stime` from `/proc/PID/stat`.
+- **UI font**: FreeType costs ~2.5 ms a glyph, seconds across the apps' tables, so `tools/deploy.sh` runs `trendos.py --bake-glyphs` to write `/usr/local/share/trendos/glyphs.bin` (~430 KB, read in ~60 ms; not in git). New app text sizes are picked up on the next deploy. No usable file = drawn as needed, so a slow start but nothing breaks. Changing the font or `FONT_UI_SCALE` takes a deploy to show. Screens still on PIL (`gfx.glyph`, Clock, Wi-Fi, Bluetooth, SSH, power menu) don't use it.
 - **Icon shading**: shared light is to one side, so flat-fronted icons (Files, SSH) go nearly dark at one end of the sway. Not fixed: affects every icon.
 
 ## 3. Code map
@@ -53,7 +54,7 @@ C rules: `native/README.md`. Other: `/usr/local/sbin/*` helpers, `bootimg/ramdis
 Rules:
 - Use `canvas` + `ui.native_card` (~10 ms vs PIL ~50 ms); PIL for one-off images or a once-a-second redraw (~45 ms).
 - Keep `key()` cheap and stable when idle; add time buckets (`int(now*30)`) only when animating.
-- `render()` may run before `on_open`, because apps are pre-rendered one per frame at startup, so slow setup must go on a thread.
+- `render()` runs before `on_open`: the shell pre-renders every app before its first frame, behind the ramdisk's loading spin, so one-off setup belongs in the first `render()` and costs no stall. Anything slow after that goes on a thread.
 - Animation: one persistent buffer, whole-array numpy, redraw changed regions. Slow work: daemon thread + version in `key()`.
 - Style: black, `ACCENT`, VT323, ASCII. Add 3D where it fits: keep a copy of the 2D layer, restore the viewport each frame, `draw_view` into it (wifi `_draw_bars`, clock `_draw_3d`).
 

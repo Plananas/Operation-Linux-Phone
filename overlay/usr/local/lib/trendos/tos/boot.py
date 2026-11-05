@@ -6,9 +6,14 @@ import numpy as np
 
 from .config import (W, H, TOP, BAND, TITLE, TITLE_Y, TITLE_H, STATS_Y, STATS_H, ACCENT, GREY, DIM,
                      ROWS, COLS, CH, CW, BOOT_FPS, BOOT_N, BOOTANIM_PID, SOUND, SOUND_PLAYED)
-from .canvas import text_strip
+from .canvas import ignore_baked, masks_seen, text_strip, text_width, write_glyphs
 from .gfx import canvas, centre_text, font, to_rgbx
 from .render import TILES, boot_matrix, compose, shape_grid
+
+
+LATIN1 = bytes([*range(0x20, 0x7f), *range(0xa0, 0x100)]).decode("latin-1")
+TITLE_SIZE, STATS_SIZE = 28, 15                  # the title bar's and stats panel's text
+BAKE_ALL_UP_TO = 34                              # size in px; above this it's a big display of digits
 
 
 def boot_frame(cube):
@@ -30,6 +35,23 @@ def export_bootanim(path, cube):
     hdr = struct.pack("<4s8I", b"BANM", BOOT_N, ROWS, COLS, CH, CW, TOP, BOOT_FPS, len(TILES))
     with open(path, "wb") as f:
         f.write(hdr + TILES.tobytes() + grids.tobytes())
+
+
+def bake_glyphs(path, entries):
+    """Write the glyph file: whatever the apps and home screen draw at their first render, plus the
+    rest of Latin-1 at the text sizes, because file names and web pages can hold any of it. The big
+    display sizes stay as drawn: they only ever show digits."""
+    ignore_baked()
+    for en in entries:
+        if en.app is not None:
+            en.app.finish_setup()
+            en.app.render(time.monotonic())
+    text_width("\u2039", TITLE_SIZE)
+    sizes = {size for _, size in masks_seen()} | {STATS_SIZE, TITLE_SIZE}
+    for size in sizes:
+        if size <= BAKE_ALL_UP_TO:
+            text_width(LATIN1, size)
+    write_glyphs(path, masks_seen())
 
 
 def stop_bootanim():

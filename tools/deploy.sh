@@ -46,6 +46,7 @@ find /usr/local/lib/trendos -name __pycache__ -type d -exec rm -rf {} +
 rm -f /usr/local/bin/cube.py
 (cd /usr/local/lib/trendos/tos && rm -f fb.py inputdev.py fm.py btchip.py audio.py bluetooth.py sshmon.py)   # moved to tos/hw/
 (cd /usr/local/lib/trendos/tos/apps && rm -f calculator.py radio.py clock.py ssh.py wifi.py bluetooth.py spotify.py)   # each app has its own folder now
+/usr/local/bin/trendos.py --bake-glyphs || echo "== glyph file not written: the shell will stall for a few seconds after it starts"
 rc-service bootscreen restart >/dev/null
 if [ "$SPOTIFY" = 1 ] && [ -x /usr/local/bin/go-librespot ]; then
 	apk info -e alsa-lib flac-libs mpg123-libs libvorbis libogg >/dev/null || apk add -q alsa-lib flac-libs mpg123-libs libvorbis libogg

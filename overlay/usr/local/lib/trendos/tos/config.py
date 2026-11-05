@@ -33,6 +33,7 @@ BOOTANIM_PID = "/dev/.bootanim.pid"                 # written by the ramdisk's b
 # green-phosphor terminal look. Sizes in the code are DejaVu-equivalent px; gfx.font() scales.
 FONT_UI = "/usr/local/share/trendos/fonts/VT323-Regular.ttf"
 FONT_UI_SCALE = 1.3                # VT323 cap height is 0.56 em vs DejaVu's 0.73 em
+GLYPH_FILE = "/usr/local/share/trendos/glyphs.bin"   # the UI font's glyphs, drawn by tools/deploy.sh (see canvas.py)
 # The ASCII-shaded 3D objects keep DejaVu Sans Mono: SHADES' density ramp is tuned to it.
 FONT_ART = "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf"
 

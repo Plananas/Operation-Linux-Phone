@@ -440,11 +440,10 @@ class RadioApp(App):
         bgrow = self._buf[self._dy0:self._dy1, DX0 + 40, :3]
         scan = np.array([tuple(c) == SCAN for c in bgrow], np.uint16)
         lut = np.zeros((2, 16, 256, 4), np.uint8)
+        amount = np.arange(256)[None, :, None] / 255 * np.arange(16)[:, None, None] / 15
+        ink = np.array(BG) + (np.array(ACCENT) - np.array(BG)) * amount
         for r, bgc in enumerate((PANEL, SCAN)):
-            for q in range(16):
-                for i in range(256):
-                    ink = _mix(BG, ACCENT, i / 255 * q / 15)
-                    lut[r, q, i, :3] = tuple(max(a, b) for a, b in zip(ink, bgc))
+            lut[r, :, :, :3] = np.maximum(ink.astype(np.intp), bgc)
         self._dial_tables = (                                       # geometry, fixed for the app's life
             np.stack(mips),
             (scan[:, None] << 12) | (sq[None, :] << 8),                 # per pixel: lut row

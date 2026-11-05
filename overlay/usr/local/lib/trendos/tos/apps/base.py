@@ -5,6 +5,9 @@ class App:
     keep_awake = False          # True: the screen doesn't auto-sleep while this app is open
     icon_shape = None           # set by its launcher Entry: shown spinning in the title bar
 
+    def finish_setup(self):
+        """Wait for any setup running on the side, so that render() shows the real thing."""
+
     def background(self, now):
         """Called by the shell about once a second, even when the app is closed or the screen
         is off (then every few seconds). Return True to be brought to the front (the screen is
@@ -12,8 +15,8 @@ class App:
         return False
 
     def on_open(self):
-        """The app is being opened (start hardware, threads, ...). render() may already have
-        been called before this, to pre-render the first frame, so render must not need it."""
+        """The app is being opened (start hardware, threads, ...). render() has already been
+        called before this, to pre-render the first frame, so render must not need it."""
 
     def on_close(self):
         """The app was closed (Back, Home or title tap). Stop what on_open started."""
