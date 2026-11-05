@@ -16,7 +16,7 @@ from .config import (W, H, NPAGES, TOP, TITLE, TITLE_Y, TITLE_H, BAND, ACCENT, G
 from .hw.fb import Framebuffer
 from .canvas import text_strip
 from .hw.inputdev import Input
-from .launcher import Launcher, default_entries, settings_entries
+from .launcher import Launcher, default_entries, utilities_entries
 from .render import MINI, MINI_CW, MINI_CH, draw_view, matrix
 from .stats import StatsPanel
 from .title import TitleAnim
@@ -52,8 +52,8 @@ class Shell:
         self.home = Launcher(self.entries, now)
         self.launcher = self.home            # current carousel (home or a sub-menu)
         self.carousel_is_home = True
-        self.settings = None                 # built lazily on first open
-        self.home_snap = None                # home screen image, to slide back to from settings
+        self.utilities = None                 # built lazily on first open
+        self.home_snap = None                # home screen image, to slide back to from utilities
         self.stats = StatsPanel()
         self.title = TitleAnim(TITLE, f"Welcome, {GREET_NAME}")
         self.mode, self.app = "launcher", None
@@ -128,8 +128,8 @@ class Shell:
         self.menu = None
         if self.app is not None and self.app is not app:
             self.app.on_close()
-        if self.settings is not None:
-            self.settings.reset_position()
+        if self.utilities is not None:
+            self.utilities.reset_position()
         self.home.cur, self.home.off = 0, 0.0
         self.home.reset_position()
         self.launcher = self.home; self.carousel_is_home = True
@@ -316,21 +316,21 @@ class Shell:
         self.start_transition(snap, self.app_frame(app, now, badge=self.flight is None), True, "app",
                               overlay=self.flight.draw if self.flight else None)
 
-    def open_settings(self):
+    def open_utilities(self):
         now = time.monotonic()
-        if self.settings is None:
-            self.settings = Launcher(settings_entries(), now, is_home=False)
+        if self.utilities is None:
+            self.utilities = Launcher(utilities_entries(), now, is_home=False)
         self.home_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()
-        self.launcher = self.settings; self.carousel_is_home = False
+        self.launcher = self.utilities; self.carousel_is_home = False
         self.launcher.invalidate()
-        self.start_transition(self.home_snap, self.carousel_frame(self.settings, "\u2039 Settings", now),
-                              True, "launcher", live_carousel=self.settings, live_side="front",
-                              live_title="\u2039 Settings")
+        self.start_transition(self.home_snap, self.carousel_frame(self.utilities, "\u2039 Utilities", now),
+                              True, "launcher", live_carousel=self.utilities, live_side="front",
+                              live_title="\u2039 Utilities")
 
-    def close_settings(self):
+    def close_utilities(self):
         front = self.fb.pages[(self.page - 1) % NPAGES].copy()
-        if self.settings is not None:
-            self.settings.reset_position()
+        if self.utilities is not None:
+            self.utilities.reset_position()
         self.launcher = self.home; self.carousel_is_home = True
         self.launcher.invalidate()
         self.start_transition(self.home_snap, front, False, "launcher",
@@ -344,8 +344,8 @@ class Shell:
             self.launcher.on_home(now)            # already home: just re-centre
             return
         front = self.fb.pages[(self.page - 1) % NPAGES].copy()
-        if self.settings is not None:
-            self.settings.reset_position()
+        if self.utilities is not None:
+            self.utilities.reset_position()
         if self.app is not None:
             self.app.on_close()
         self.app = None
@@ -360,7 +360,7 @@ class Shell:
         """Slide the app out; the badge flies back down into its place in the carousel."""
         visible = self.fb.pages[(self.page - 1) % NPAGES].copy()
         back = self.launcher_snap if self.launcher_snap is not None else np.zeros_like(visible)
-        title = "Welcome, " + GREET_NAME if self.carousel_is_home else "\u2039 Settings"
+        title = "Welcome, " + GREET_NAME if self.carousel_is_home else "\u2039 Utilities"
         fl, self.flight = self.flight, None
         if fl is not None:
             visible[:TOP, self.BADGE_X:] = 0                           # the badge is the flyer
@@ -379,8 +379,8 @@ class Shell:
             self.stats.update(now, self.fps, may_render=not self.launcher.busy)
             self.stats.sync(buf, self.page)
         else:
-            self.draw_title(buf, ("menu", "Settings"),
-                            lambda: text_strip("\u2039 Settings", 28, ACCENT, TITLE_H, x=16))
+            self.draw_title(buf, ("menu", "Utilities"),
+                            lambda: text_strip("\u2039 Utilities", 28, ACCENT, TITLE_H, x=16))
 
     # ---- input ---------------------------------------------------------------------------------------
     def handle(self, ev, now):
@@ -400,16 +400,16 @@ class Shell:
                 if y == 1 and x == KEY_HOME:
                     self.go_home()
                 elif y == 1 and x == KEY_BACK and not self.carousel_is_home:
-                    self.close_settings()
+                    self.close_utilities()
             elif not self.carousel_is_home and kind == "up" and y < TOP:
-                self.close_settings()                 # tap the "< Settings" title to go back
+                self.close_utilities()                 # tap the "< Utilities" title to go back
             else:
                 en = self.launcher.on_touch(kind, x, y, t, now)
                 if en is not None:
                     if en.app is not None:
                         self.open_app(en.app, en)
-                    elif en.opens == "settings":
-                        self.open_settings()
+                    elif en.opens == "utilities":
+                        self.open_utilities()
 
     def on_power_key(self, pressed, now):
         """Short press: screen off. Long press (handled in frame()): power menu."""

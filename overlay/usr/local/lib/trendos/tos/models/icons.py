@@ -248,9 +248,9 @@ _mascot_pose("mascot_think", "aside", "small")
 _mascot_pose("mascot_hello", "ahead", "grin")
 
 
-@model("settings", CYAN)
-def settings():
-    """Settings: three stacked horizontal bars (like sliders)."""
+@model("utilities", CYAN)
+def utilities():
+    """Utilities: three stacked horizontal bars (like sliders)."""
     return boxes([((0, y, 0), (1.0, 0.17, 0.22)) for y in (0.62, 0.0, -0.62)],
                  colour_by_axis=(CYAN, CYAN, CYAN))
 

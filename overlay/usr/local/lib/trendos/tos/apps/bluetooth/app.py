@@ -1,4 +1,4 @@
-"""Bluetooth (Settings > Bluetooth): switch Bluetooth on/off, find, pair and connect devices.
+"""Bluetooth (Utilities > Bluetooth): switch Bluetooth on/off, find, pair and connect devices.
 
   "bluetooth" card  the phone's Bluetooth name + address, status, and the 3D Bluetooth rune
                     (spins faster while scanning)

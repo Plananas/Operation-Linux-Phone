@@ -10,7 +10,7 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, KERNEL p20, RECOVERY p21, system p24
 - OpenRC default: `usbnet sshd bootscreen wifi timesync dbus btuart bluetooth btaudio local`. Shell = `bootscreen` (supervise-daemon) → `/usr/local/bin/trendos.py` → `tos` package + `libtrend.so`.
 - Storage: userdata holds `alpine/` + `native-init.log`. Android's `system` is intact but unused (Wi-Fi firmware and FM patch copied to `/data/wifi`, `/data/bt`).
 - Network: Wi-Fi (default route) + USB RNDIS (phone 192.168.42.129, laptop .1, NM conn `phone-usb`). SSH key-only, root.
-- Carousel: cube, Web, Calculator, Radio, Music, Clock, SSH, Files, Settings → [Wi-Fi, Bluetooth].
+- Carousel: cube, Web, Calculator, Radio, Music, Clock, Files, Utilities → [Wi-Fi, Bluetooth, SSH].
 - Time: Europe/London. `timesync` = busybox ntpd as root (Alpine's `ntpd` needs ambient capabilities, not in 3.10); `-S ntp-synced` writes `/tmp/ntp-last-sync`; RTC saved at shutdown.
 
 ## 2. Gotchas
@@ -47,7 +47,7 @@ C rules: `native/README.md`. Other: `/usr/local/sbin/*` helpers, `bootimg/ramdis
 ## 4. Adding an app
 1. `tos/apps/myapp/app.py` + `__init__.py` (`from .app import MyApp`), export in `tos/apps/__init__.py`. Subclass `App`: `name`, `touch(ev, x, y)` (screen coords), `key(now)` (hashable; render only runs when it changes), `render(now)` → RGBX array `(APP_H, W, 4)`. Optional: `on_open/on_close`, `on_key(code, pressed)` (True if used), `background(now)` (~1/s even closed; True wakes and fronts it), `keep_awake`.
 2. Icon: `@model("myicon", COLOUR)` returning `boxes`, `extrude` or `relief`, within ~±1.3 x/y, flat front. Preview: `cd /usr/local/lib/trendos && python3 -m tos.models myicon`.
-3. `Entry("myicon", MyApp(), phase=(a, b, c))` in `default_entries()` or `settings_entries()`; submenu `opens="name"`.
+3. `Entry("myicon", MyApp(), phase=(a, b, c))` in `default_entries()` or `utilities_entries()`; submenu `opens="name"`.
 4. `tools/deploy.sh`, then `rc-service bootscreen status`. Log: `/var/log/bootscreen.log`.
 
 Rules:
@@ -96,4 +96,4 @@ TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · 
 `backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). Full image `backup/phone-image-2026-11-03/` (gitignored, restore steps in its README). Never wipe efs/prodnv/*nv/PARAM/MODEM/bootloaders on the phone. Stock zip in `firmware/stock/` (gitignored; samfw.com).
 
 ## 9. Next ideas
-Radio seek + RDS · Clock timer/stopwatch · Settings: Display/Sound/About · Music: shuffle, albums, global volume keys, remember place · system monitor, notes, smart-home controller · web, DNS ad-block, MQTT services · ntfy notifications.
+Radio seek + RDS · Clock timer/stopwatch · Utilities: Display/Sound/About · Music: shuffle, albums, global volume keys, remember place · system monitor, notes, smart-home controller · web, DNS ad-block, MQTT services · ntfy notifications.

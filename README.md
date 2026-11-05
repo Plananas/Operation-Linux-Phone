@@ -21,9 +21,8 @@ A Samsung Galaxy Trend 2 Lite (SM-G318H, 2015) running its own small Linux syste
 - **Radio:** FM. Plug in wired headphones first, because they're the antenna, even if you listen over Bluetooth.
 - **Music:** plays MP3, FLAC, Ogg, Opus and WAV from `/data/music`, with a 3D visualiser tab. Keeps playing when closed. Uses Bluetooth, then wired headphones, then the speaker.
 - **Clock:** up to 4 alarms, which ring even with the screen off. A volume key snoozes for 5 minutes. Sets its own time over Wi-Fi.
-- **SSH:** who's connected, plus a log of logins. View only.
 - **Files:** manage `/data/music` and `/data/files` from a browser. Tap **start sharing**, open the address shown and type the PIN. It's plain HTTP, so only use it on a Wi-Fi network you trust.
-- **Settings:** Wi-Fi and Bluetooth. Put headphones or speakers in pairing mode, tap **scan**, then tap the device.
+- **Utilities:** Wi-Fi, Bluetooth and SSH. For Bluetooth, put headphones or speakers in pairing mode, tap **scan**, then tap the device. SSH shows who's connected and a log of logins, and is view only.
 
 ## From the laptop
 
