@@ -234,7 +234,7 @@ static int open_pcm(tr_player *p, unsigned rate)
 		p->output = best_output(p);
 		route_to(p->output);
 		if (p->output == TR_OUTPUT_BLUETOOTH)
-			snprintf(device, sizeof(device), "plug:'bluealsa:DEV=%s,PROFILE=a2dp'", p->bt_mac);
+			snprintf(device, sizeof(device), "trendbt:DEV=%s", p->bt_mac);
 		else
 			snprintf(device, sizeof(device), "%s", DEVICE_PHONE);
 	}

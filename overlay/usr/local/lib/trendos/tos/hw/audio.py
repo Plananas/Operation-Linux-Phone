@@ -34,4 +34,4 @@ def bt_sink():
 
 
 def bt_device(mac):
-    return f"bluealsa:DEV={mac},PROFILE=a2dp"
+    return f"trendbt:DEV={mac}"

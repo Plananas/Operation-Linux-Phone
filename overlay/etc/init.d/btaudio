@@ -9,7 +9,7 @@ supervisor=supervise-daemon
 # second; from an SSH shell (big environment) it works. Workaround: an 8 KB padding variable.
 STACK_PAD=$(head -c 8192 /dev/zero | tr '\0' x)
 command="/usr/bin/env"
-command_args="STACK_PAD=$STACK_PAD /usr/bin/bluealsa -p a2dp-source -p a2dp-sink"
+command_args="STACK_PAD=$STACK_PAD /usr/bin/bluealsa -p a2dp-source -p a2dp-sink --a2dp-force-audio-cd"
 output_log="/var/log/btaudio.log"
 error_log="/var/log/btaudio.log"
 respawn_delay=3

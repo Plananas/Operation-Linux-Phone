@@ -8,7 +8,7 @@ HOST=${1:-root@192.168.42.129}
 cd "$(dirname "$0")/.."
 O=overlay
 FILES="usr/local/bin/trendos.py usr/local/bin/mksound.py usr/local/bin/mkcharger.py
-       usr/local/lib/trendos/tos usr/local/sbin etc/init.d/bootscreen etc/init.d/usbnet etc/local.d
+       usr/local/lib/trendos/tos usr/local/sbin etc/alsa/conf.d/30-trendos-bt.conf etc/init.d/bootscreen etc/init.d/usbnet etc/local.d
        etc/init.d/spotify etc/init.d/wifi etc/init.d/timesync etc/init.d/btuart etc/init.d/btaudio etc/conf.d/hwclock etc/timezone
        var/lib/go-librespot/config.yml usr/local/share/trendos/fonts usr/local/share/trendos/files"
 echo "== copying files to $HOST"
