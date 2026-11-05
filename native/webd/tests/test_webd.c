@@ -5,6 +5,7 @@
 
 #include "ascii.h"
 #include "doc.h"
+#include "gemini.h"
 #include "html.h"
 #include "json.h"
 #include "url.h"
@@ -343,6 +344,134 @@ static void test_json(void)
 	sb_free(&out);
 }
 
+static void test_json_each(void)
+{
+	const json_val arr = { " [ 1 , {\"x\":[2]},\"s\" ] ", 24 };
+	json_val v;
+	size_t at = 0;
+	CHECK(json_each(arr, &at, &v) && v.n == 1 && v.s[0] == '1');
+	CHECK(json_each(arr, &at, &v) && v.n == 9 && json_valid(v.s, v.n));
+	CHECK(json_each(arr, &at, &v) && str_is(v, "s"));
+	CHECK(!json_each(arr, &at, &v));
+	static const char *const NOT[] = { "[]", " [ ] ", "{}", "", "[", "[,1]", "7" };
+	for (size_t i = 0; i < sizeof(NOT) / sizeof(NOT[0]); i++) {
+		at = 0;
+		CHECK(!json_each((json_val){ NOT[i], strlen(NOT[i]) }, &at, &v));
+	}
+	const json_val cut = { "[1,", 3 };
+	at = 0;
+	CHECK(json_each(cut, &at, &v));
+	CHECK(!json_each(cut, &at, &v));
+}
+
+static void chunk(gemini_reply *r, const char *js)
+{
+	gemini_read_chunk(js, strlen(js), r);
+}
+
+static void test_gemini_reply(void)
+{
+	gemini_reply r = { 0 };
+	CHECK(gemini_outcome_of(&r) == GEMINI_FAILED);     /* the stream ended with no finish */
+
+	/* Text arrives in pieces. The closing empty part isn't sent back, but one with a signature is. */
+	chunk(&r, "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hel\"}]},\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":1}}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_FAILED);
+	chunk(&r, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"lo\\n\"},{\"text\":\"\"}]}}]}");
+	chunk(&r, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"\",\"thoughtSignature\":\"sig\"}]},\"finishReason\":\"STOP\"}],"
+	          "\"usageMetadata\":{\"promptTokenCount\":9,\"candidatesTokenCount\":4,\"thoughtsTokenCount\":6}}");
+	CHECK(!strcmp(r.text.s, "Hello\n"));
+	CHECK(!strcmp(r.parts.s, "{\"text\":\"Hel\"},{\"text\":\"lo\\n\"},{\"text\":\"\",\"thoughtSignature\":\"sig\"}"));
+	CHECK(gemini_outcome_of(&r) == GEMINI_DONE);
+	gemini_reply_clear(&r);
+	CHECK(!r.text.n && !r.parts.n && !r.finish.n);
+
+	/* Tool calls keep their signature when sent back; args are JSON text. */
+	const char *call = "{\"functionCall\":{\"id\":\"c1\",\"name\":\"read_page\",\"args\":{\"url\":\"a.b\"}},\"thoughtSignature\":\"s1\"}";
+	sb js = { 0 };
+	sb_adds(&js, "{\"candidates\":[{\"content\":{\"parts\":[");
+	sb_adds(&js, call);
+	sb_adds(&js, ",{\"functionCall\":{\"name\":\"search_web\",\"args\":{\"query\":\"q\"}}}]},\"finishReason\":\"STOP\"}]}");
+	chunk(&r, js.s);
+	sb_free(&js);
+	CHECK(gemini_outcome_of(&r) == GEMINI_CALLS);
+	CHECK(r.n_calls == 2 && !strcmp(r.calls[0].name.s, "read_page") && !strcmp(r.calls[0].id.s, "c1"));
+	CHECK(!strcmp(r.calls[0].args.s, "{\"url\":\"a.b\"}") && !r.calls[1].id.n);
+	CHECK(!r.text.n && strstr(r.parts.s, call) == r.parts.s);
+
+	/* The whole conversation comes out as a valid request. */
+	sb contents = { 0 }, results = { 0 }, body = { 0 };
+	gemini_add_user(&contents, "hi \"there\"", 10);
+	gemini_add_model(&contents, &r);
+	gemini_add_result(&results, &r.calls[0], "page \"text\"", 11, 1);
+	gemini_add_result(&results, &r.calls[1], "no", 2, 0);
+	gemini_add_results(&contents, &results);
+	gemini_body(&body, "be \"brief\"", "[{\"functionDeclarations\":[]}]", &contents);
+	CHECK(json_valid(body.s, body.n));
+	json_val v, item, f;
+	size_t at = 0;
+	CHECK(json_get(body.s, body.n, "systemInstruction.parts", &v));
+	CHECK(json_get(body.s, body.n, "generationConfig.maxOutputTokens", &v) && json_number(v) == 16000);
+	CHECK(json_get(body.s, body.n, "contents", &v));
+	CHECK(json_each(v, &at, &item) && json_get(item.s, item.n, "role", &f) && str_is(f, "user"));
+	CHECK(json_each(v, &at, &item) && json_get(item.s, item.n, "role", &f) && str_is(f, "model"));
+	CHECK(strstr(item.s, "\"thoughtSignature\":\"s1\"") != NULL);
+	CHECK(json_each(v, &at, &item) && json_get(item.s, item.n, "role", &f) && str_is(f, "user"));
+	CHECK(!json_each(v, &at, &item));
+	CHECK(strstr(results.s, "{\"functionResponse\":{\"id\":\"c1\",\"name\":\"read_page\",\"response\":{\"result\":\"page \\\"text\\\"\"}}}") == results.s);
+	CHECK(strstr(results.s, "{\"functionResponse\":{\"name\":\"search_web\",\"response\":{\"error\":\"no\"}}}") != NULL);
+	sb_free(&contents);
+	sb_free(&results);
+	sb_free(&body);
+	gemini_reply_clear(&r);
+
+	/* How replies can end. */
+	chunk(&r, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"so far\"}]},\"finishReason\":\"MAX_TOKENS\"}]}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_CUT_OFF);
+	gemini_reply_clear(&r);
+	chunk(&r, "{\"candidates\":[{\"finishReason\":\"MAX_TOKENS\"}]}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_FAILED);
+	gemini_reply_clear(&r);
+	chunk(&r, "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"x\"}}]},\"finishReason\":\"MAX_TOKENS\"}]}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_FAILED);     /* a call with no answer can't stay in the history */
+	gemini_reply_clear(&r);
+	chunk(&r, "{\"candidates\":[{\"finishReason\":\"STOP\"}]}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_FAILED);
+	gemini_reply_clear(&r);
+	chunk(&r, "{\"candidates\":[{\"finishReason\":\"MALFORMED_FUNCTION_CALL\"}]}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_FAILED);
+	gemini_reply_clear(&r);
+	chunk(&r, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"par\"}]},\"finishReason\":\"SAFETY\"}]}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_DECLINED);
+	gemini_reply_clear(&r);
+	chunk(&r, "{\"promptFeedback\":{\"blockReason\":\"OTHER\"}}");
+	CHECK(gemini_outcome_of(&r) == GEMINI_DECLINED);
+	gemini_reply_clear(&r);
+	chunk(&r, "{\"error\":{\"code\":503,\"message\":\"overloaded\"}}");
+	CHECK(!strcmp(r.error.s, "overloaded"));
+	gemini_reply_clear(&r);
+
+	/* Thoughts never reach the screen. */
+	chunk(&r, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hmm\",\"thought\":true},{\"text\":\"yes\"}]},\"finishReason\":\"STOP\"}]}");
+	CHECK(!strcmp(r.text.s, "yes") && strstr(r.parts.s, "hmm"));
+	gemini_reply_clear(&r);
+
+	/* Too many calls in one reply fails the turn, and nothing overruns. */
+	for (int i = 0; i < GEMINI_MAX_CALLS + 3; i++)
+		chunk(&r, "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"x\",\"args\":{}}}]},\"finishReason\":\"STOP\"}]}");
+	CHECK(r.n_calls == GEMINI_MAX_CALLS && gemini_outcome_of(&r) == GEMINI_FAILED);
+	gemini_reply_clear(&r);
+
+	/* Nonsense from the network adds nothing. */
+	static const char *const BAD[] = { "", "{", "[]", "{\"candidates\":3}", "{\"candidates\":[]}", "{\"candidates\":[{\"content\":{\"parts\":7}}]}",
+	                                   "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":3}", "{\"candidates\":[{\"finishReason\":9}]}" };
+	for (size_t i = 0; i < sizeof(BAD) / sizeof(BAD[0]); i++) {
+		chunk(&r, BAD[i]);
+		CHECK(!r.text.n && !r.n_calls && gemini_outcome_of(&r) == GEMINI_FAILED);
+		gemini_reply_clear(&r);
+	}
+}
+
 static void test_ascii(void)
 {
 	CHECK(ascii_tile(0, 0, 0) == 0);
@@ -382,6 +511,8 @@ int main(void)
 	test_html();
 	test_flow_and_markdown();
 	test_json();
+	test_json_each();
+	test_gemini_reply();
 	test_ascii();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;

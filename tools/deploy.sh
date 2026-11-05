@@ -38,7 +38,7 @@ id trendfiles >/dev/null 2>&1 || adduser -S -D -H -h /nonexistent -s /sbin/nolog
 mkdir -p /data/files
 # The Web app's connection to the internet, and the user it runs as. The Web app says so if it's missing.
 apk info -e openssl-dev stb >/dev/null || apk add -q openssl-dev stb || echo "== no internet for webd'"'"'s packages"
-gcc -std=gnu11 -O2 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Iinclude -Wall -Wextra -o /usr/local/lib/trendos/webd webd/doc.c webd/url.c webd/html.c webd/json.c webd/ascii.c webd/net.c webd/fetch.c webd/wire.c webd/agent.c webd/webd.c -lssl -lcrypto -lm || echo "== webd not built: the Web app will say so"
+gcc -std=gnu11 -O2 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Iinclude -Wall -Wextra -o /usr/local/lib/trendos/webd webd/doc.c webd/url.c webd/html.c webd/json.c webd/ascii.c webd/gemini.c webd/net.c webd/fetch.c webd/wire.c webd/agent.c webd/webd.c -lssl -lcrypto -lm || echo "== webd not built: the Web app will say so"
 id trendweb >/dev/null 2>&1 || adduser -S -D -H -h /nonexistent -s /sbin/nologin trendweb
 cd /
 rm -rf /tmp/libtrend-src /usr/local/lib/trendos/librender.so

@@ -70,7 +70,7 @@ title bar.
   drawn in the terminal font and pictures become shaded ASCII, like the icons. `<` `>` `R` are back, forward and
   reload; the Back key closes the app, as everywhere. There's no JavaScript, so Wikipedia and Hacker News work well
   but sites built by scripts come up nearly empty; no cookies either, so nothing stays logged in. The chat needs an
-  API key (below) and lasts until a restart; **new** starts another. Each reply shows the tokens it used.
+  API key (below) and lasts until a restart; **new** starts another.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 
 ## Connecting from the laptop
@@ -87,16 +87,17 @@ The phone is on your **Wi-Fi** now, and also reachable over the **USB cable**.
 
 ## The chat's API key
 
-The Web app's chat uses Claude through Anthropic's API, which you pay for by use. Get a key at
-[console.anthropic.com](https://console.anthropic.com), then on the laptop run this, paste the key, press Enter, then Ctrl-D:
+The Web app's chat uses Google's Gemini on the free tier, with no billing account. Get a key at
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey), then on the laptop run this, paste the key, press Enter, then Ctrl-D:
 
 ```sh
-ssh root@192.168.42.129 'mkdir -p /etc/trendos && umask 077 && cat > /etc/trendos/anthropic-key && rc-service bootscreen restart'
+ssh root@192.168.42.129 'mkdir -p /etc/trendos && umask 077 && cat > /etc/trendos/gemini-key && rc-service bootscreen restart'
 ```
 
-The key stays in that root-only file and only ever goes to `api.anthropic.com`. To change which model it uses, set `WEB_MODEL` in
-`overlay/usr/local/lib/trendos/tos/config.py`. It starts on `claude-opus-5-5` ($4 in, $20 out per million tokens);
-`claude-haiku-5-5` ($0.10 in, $0.50 out) is far cheaper for everyday questions. Web pages the agent reads count as tokens too.
+The key stays in that root-only file and only ever goes to Google. To change which model it uses, set `WEB_MODEL` in
+`overlay/usr/local/lib/trendos/tos/config.py`. It starts on `gemini-3.6-flash`, because the newer `gemini-3.8-flash` was refusing free requests as overloaded when this was set up. Free use is rate-limited per minute and per day, and
+the chat says so when you hit a limit; the current numbers are at [aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit).
+Web pages the agent reads count as tokens too.
 
 ## Updating TREND OS
 

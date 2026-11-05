@@ -139,6 +139,32 @@ int json_get(const char *js, size_t n, const char *path, json_val *out)
 	return 1;
 }
 
+int json_each(json_val array, size_t *at, json_val *item)
+{
+	const char *s = array.s;
+	const size_t n = array.n;
+	size_t i = skip_ws(s, n, *at);
+	if (i >= n)
+		return 0;
+	if (!*at) {
+		if (s[i] != '[')
+			return 0;
+		i = skip_ws(s, n, i + 1);
+		if (i < n && s[i] == ']')
+			return 0;
+	} else {
+		if (s[i] != ',')
+			return 0;
+		i = skip_ws(s, n, i + 1);
+	}
+	const size_t end = skip_value(s, n, i, 0);
+	if (!end)
+		return 0;
+	*item = (json_val){ s + i, end - i };
+	*at = end;
+	return 1;
+}
+
 static int hex4(const char *s, unsigned *out)
 {
 	unsigned v = 0;

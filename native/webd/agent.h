@@ -1,4 +1,4 @@
-/* The chat agent: talks to the Claude Messages API and shows the conversation as a document. */
+/* The chat agent: talks to the Gemini API and shows the conversation as a document. */
 #ifndef WEBD_AGENT_H
 #define WEBD_AGENT_H
 

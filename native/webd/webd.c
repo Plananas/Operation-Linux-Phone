@@ -527,7 +527,7 @@ static void give_up_root(const char *user)
 
 int main(int argc, char **argv)
 {
-	const char *user = NULL, *keyfile = NULL, *base = "https://api.anthropic.com", *model = "claude-opus-5-5";
+	const char *user = NULL, *keyfile = NULL, *base = "https://generativelanguage.googleapis.com", *model = "gemini-3.6-flash";
 	if (argc < 2) {
 		fprintf(stderr, "usage: webd web|agent [-u user] [-k keyfile] [-a api-base] [-m model]\n");
 		return 2;
