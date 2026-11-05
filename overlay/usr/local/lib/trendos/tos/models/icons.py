@@ -88,6 +88,7 @@ _WORLD = ("                                    ",
           "          #                         ",
           "                                    ",
           "      ###########################   ")
+_WORLD_FRONT = 22                       # the column that faces the viewer: Africa and Europe, not the Pacific
 
 
 @model("globe", BLUE)
@@ -112,7 +113,8 @@ def globe(radius=1.25, lats=18, lons=36):
                                 -radius * math.cos(lat) * math.cos(lon)))
             normal = (math.cos(mid_lat) * math.sin(mid_lon), math.sin(mid_lat), -math.cos(mid_lat) * math.cos(mid_lon))
             row = _WORLD[j]
-            land = i < len(row) and row[i] == "#"
+            column = (i + _WORLD_FRONT) % lons
+            land = column < len(row) and row[column] == "#"
             faces.append((pts, normal, GREEN if land else BLUE))
     return Shape.from_faces(faces)
 
