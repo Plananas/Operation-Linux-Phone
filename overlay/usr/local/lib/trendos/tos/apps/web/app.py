@@ -10,6 +10,7 @@ import fcntl
 import os
 import re
 import subprocess
+import threading
 
 import numpy as np
 
@@ -17,12 +18,14 @@ from ... import canvas, native
 from ...config import (ACCENT, APP_H, CAM_Z, CH, CW, LIGHT, NS, PALETTE, RED, TOP, W, WEB_API_BASE, WEB_KEY_FILE,
                        WEB_MODEL, WEB_USER, WEBD)
 from ...keyboard import KB_Y, Keyboard
+from ...models import MASCOT_POSES, get
 from ...render import TILES
 from ..base import App
 
 LATIN1 = bytes([*range(0x20, 0x7f), *range(0xa0, 0x100)]).decode("latin-1")
-SMALL_COLS, SMALL_ROWS, SMALL_K = 16, 8, 18.0
+HEAD_COLS, HEAD_ROWS, HEAD_K = 28, 14, 38.0
 BIG_COLS, BIG_ROWS, BIG_K = 40, 22, 50.0
+BLIP_LIGHT = (-1.5, 2.0, -7.0)          # nearer the front than the usual light, or its mouth would be in the dark
 TEXT_MAX = 1000
 READ_PER_FRAME = 8                      # reads of up to 64 KB each, so that a big page can't stall a frame
 LOOKS_LIKE_ADDRESS = re.compile(r"^(https?://\S+|[\w-]+(\.[\w-]+)*\.[a-zA-Z]{2,}(:\d+)?(/\S*)?|\d+\.\d+\.\d+\.\d+(:\d+)?(/\S*)?)$")
@@ -98,6 +101,10 @@ class WebApp(App):
         self._agent = _Webd(self._status, native.WEB_CHAT, [WEBD, "agent", "-u", WEB_USER, "-k", WEB_KEY_FILE,
                                                             "-a", WEB_API_BASE, "-m", WEB_MODEL])
         self._browser = _Webd(self._status, native.WEB_PAGE, [WEBD, "web", "-u", WEB_USER])
+        # The shell pre-renders every app while it starts, and the mascot takes a couple of seconds to build. That
+        # mustn't freeze the home screen, so it's built on the side and the screen stays blank if it's opened sooner.
+        self._mascot = threading.Thread(target=lambda: [get(name) for name in MASCOT_POSES], daemon=True)
+        self._mascot.start()
         self._kb = None
         self._field = None                  # the form field being typed into; None means the input box
         self._theme = None
@@ -203,14 +210,19 @@ class WebApp(App):
 
     def _make_theme(self):
         tables = [canvas.font_table(size, LATIN1, {}) for size in (16, 19, 25)]
-        small = native.view(SMALL_K, CW / CH, CAM_Z, LIGHT, SMALL_COLS, SMALL_ROWS, NS)
+        head = native.view(HEAD_K, CW / CH, CAM_Z, BLIP_LIGHT, HEAD_COLS, HEAD_ROWS, NS)
+        hello = native.view(BIG_K, CW / CH, CAM_Z, BLIP_LIGHT, BIG_COLS, BIG_ROWS, NS)
         big = native.view(BIG_K, CW / CH, CAM_Z, LIGHT, BIG_COLS, BIG_ROWS, NS)
-        return native.web_theme(tables, ACCENT, PALETTE[RED], self.icon_shape.cmesh, small, big, native.atlas(TILES, CW, CH))
+        return native.web_theme(tables, ACCENT, PALETTE[RED], self.icon_shape.cmesh, big, head, hello, native.atlas(TILES, CW, CH),
+                                [get(name).cmesh for name in MASCOT_POSES])
 
     def render(self, now):
         if self._buf is None:
-            self._theme = self._make_theme()
             self._buf = np.zeros((APP_H, W, 4), np.uint8)
+        if self._theme is None:
+            if self._mascot.is_alive():
+                return self._buf
+            self._theme = self._make_theme()
         native.web_render(self._state, self._status, self._theme, now, self._buf)
         if self._kb is not None:
             kb = self._kb.render()

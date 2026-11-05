@@ -2,6 +2,7 @@
 @model(name, colour). Objects should fit in about [-1.3, 1.3] on x/y to match the others; keep
 them fairly flat-fronted so they read well while swaying.
 """
+import functools
 import math
 
 import numpy as np
@@ -117,6 +118,134 @@ def globe(radius=1.25, lats=18, lons=36):
             land = column < len(row) and row[column] == "#"
             faces.append((pts, normal, GREEN if land else BLUE))
     return Shape.from_faces(faces)
+
+
+# Blip, the chat's mascot: a round head, built from real curved surfaces so that it shades like a ball and its parts
+# move against each other as it turns. Only what can face the viewer is built, since it never turns far.
+_BLIP_HEAD_Y = -0.16
+_BLIP_EYE = (0.38, 0.28, 0.2, 0.36)                    # across, up, half width, half height, in radians around the head
+_BLIP_MOUTH_UP = -0.4
+_BLIP_MOUTHS = {"small": (0.3, 0.13), "mid": (0.4, 0.25), "wide": (0.48, 0.38)}   # half width, half height
+
+
+@functools.lru_cache(maxsize=None)
+def _ball_grid(radius, lats, lons, facing):
+    """The surface points of a sphere as unit normals, the patch each belongs to, and each patch's normal. Patches turned
+    further than `facing` (a z component) from the viewer are left out."""
+    points, patches, normals = [], [], []
+    per_unit = DENSITY * 1.25
+    for j in range(lats):
+        for i in range(lons):
+            lat0, lat1 = math.pi * (0.5 - j / lats), math.pi * (0.5 - (j + 1) / lats)
+            lon0, lon1 = 2 * math.pi * (i / lons - 0.5), 2 * math.pi * ((i + 1) / lons - 0.5)
+            mid_lat, mid_lon = (lat0 + lat1) / 2, (lon0 + lon1) / 2
+            normal = (math.cos(mid_lat) * math.sin(mid_lon), math.sin(mid_lat), -math.cos(mid_lat) * math.cos(mid_lon))
+            if normal[2] > facing:
+                continue
+            nu = max(1, int((lon1 - lon0) * math.cos(mid_lat) * radius * per_unit))
+            nv = max(1, int((lat0 - lat1) * radius * per_unit))
+            lat, lon = np.meshgrid(lat0 + (lat1 - lat0) * (np.arange(nv) + 0.5) / nv, lon0 + (lon1 - lon0) * (np.arange(nu) + 0.5) / nu)
+            points.append(np.stack([np.cos(lat) * np.sin(lon), np.sin(lat), -np.cos(lat) * np.cos(lon)], -1).reshape(-1, 3))
+            patches.append(np.full(nu * nv, len(normals)))
+            normals.append(normal)
+    return np.concatenate(points), np.concatenate(patches), normals
+
+
+def _ball(centre, radius, colours, grid):
+    """Faces of a sphere, one per patch and colour. colours(n) takes unit normals (k, 3) and gives each a palette index,
+    or -1 for a hole. All at once, on a shared grid, because building these is the slow part of starting the mascot."""
+    n, patch, normals = grid
+    col = colours(n)
+    keep = col >= 0
+    n, patch, col = n[keep], patch[keep], col[keep]
+    key = patch * 16 + col
+    order = np.argsort(key, kind="stable")
+    n, key = n[order], key[order]
+    starts = np.concatenate([[0], np.flatnonzero(key[1:] != key[:-1]) + 1, [len(key)]])
+    return [(n[a:b] * radius + centre, normals[key[a] // 16], int(key[a] % 16)) for a, b in zip(starts[:-1], starts[1:])]
+
+
+_BLIP_HEAD_GRID = (1.0, 16, 32, 0.5)
+def _around(n):
+    """Unit normals as (across, up) angles from the front of the head."""
+    return np.arctan2(n[:, 0], -n[:, 2]), np.arcsin(np.clip(n[:, 1], -1, 1))
+
+
+def _blip_mouth(across, up, mouth):
+    """Which points of the head are the mouth's opening. Shut, it's a smile: a thin curve."""
+    if mouth in ("smile", "grin"):
+        half_w, thick, curve = (0.5, 0.1, 0.7) if mouth == "smile" else (0.56, 0.17, 0.8)
+        return (abs(across) < half_w) & (abs(up - _BLIP_MOUTH_UP - curve * across ** 2 + 0.06) < thick)
+    half_w, half_h = _BLIP_MOUTHS[mouth]
+    return (across / half_w) ** 2 + ((up - _BLIP_MOUTH_UP) / half_h) ** 2 < 1
+
+
+def _blip_eyes(across, up, look):
+    """(holes, glints) in the head: dark ovals, cut into the surface so they slide round it as the head turns, each with
+    a spot of light. They're the whole of its expression, and solid shapes are what still read at a few characters."""
+    eye_across, eye_up, half_w, half_h = _BLIP_EYE
+    holes, glints = np.zeros(len(across), bool), np.zeros(len(across), bool)
+    shift = 0.12 if look == "aside" else 0.0
+    for side in (-1, 1):
+        x, y = across - side * eye_across - shift, up - eye_up
+        if look == "shut":
+            holes |= (abs(x) < half_w * 1.25) & (abs(y) < 0.05)
+        else:
+            holes |= (x / half_w) ** 2 + (y / half_h) ** 2 < 1
+            glints |= (x + 0.06) ** 2 + (y - 0.15) ** 2 < 0.09 ** 2
+    return holes, glints
+
+
+@functools.lru_cache(maxsize=None)
+def _blip_head(look, mouth):
+    centre = np.array((0.0, _BLIP_HEAD_Y, 0.0))
+
+    def skin(n):
+        across, up = _around(n)
+        col = np.full(len(n), GREEN)
+        holes, glints = _blip_eyes(across, up, look)
+        col[holes | _blip_mouth(across, up, mouth)] = -1
+        col[glints] = WHITE
+        return col
+
+    faces = _ball(centre, 1.0, skin, _ball_grid(*_BLIP_HEAD_GRID))
+    if mouth == "wide":                                # a tongue, further in, so the mouth has depth
+        def tongue(n):
+            across, up = _around(n)
+            half_w, half_h = _BLIP_MOUTHS[mouth]
+            inside = (across / half_w) ** 2 + ((up - _BLIP_MOUTH_UP) / half_h) ** 2 < 1.3
+            return np.where(inside & (up < _BLIP_MOUTH_UP - half_h * 0.45), RED, -1)
+        faces += _ball(centre, 0.86, tongue, _ball_grid(*_BLIP_HEAD_GRID))
+    return faces
+
+
+@functools.lru_cache(maxsize=None)
+def _blip_antenna():
+    faces = []
+    for k in range(10):                                # the stalk: a thin tube
+        a = 2 * math.pi * k / 10
+        n = (math.sin(a), 0.0, -math.cos(a))
+        ys = np.linspace(0.8, 0.95, 4)
+        faces.append((np.array([(n[0] * 0.05, y, n[2] * 0.05) for y in ys], np.float32), n, WHITE))
+    faces += _ball(np.array((0.0, 1.02, 0.0)), 0.13, lambda n: np.full(len(n), YELLOW), _ball_grid(0.13, 8, 16, 0.8))
+    return faces
+
+
+MASCOT_POSES = []                       # in the order of TR_WEB_MASCOT_* in trend/apps/web.h
+
+
+def _mascot_pose(name, look, mouth):
+    model(name, GREEN)(lambda: Shape.from_faces(_blip_head(look, mouth) + _blip_antenna()))
+    MASCOT_POSES.append(name)
+
+
+_mascot_pose("mascot_idle", "ahead", "smile")
+_mascot_pose("mascot_blink", "shut", "smile")
+_mascot_pose("mascot_talk", "ahead", "small")
+_mascot_pose("mascot_talk_mid", "ahead", "mid")
+_mascot_pose("mascot_talk_wide", "ahead", "wide")
+_mascot_pose("mascot_think", "aside", "small")
+_mascot_pose("mascot_hello", "ahead", "grin")
 
 
 @model("settings", CYAN)

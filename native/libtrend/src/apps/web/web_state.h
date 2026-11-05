@@ -10,7 +10,7 @@ enum {
 	/* in app-area pixels */
 	TAB_Y1 = 44, TAB_CHAT_X0 = 8, TAB_CHAT_X1 = 88, TAB_PAGE_X0 = 94, TAB_PAGE_X1 = 174,
 	KEYS_Y1 = 44, KEY_W = 58, KEYS_X1 = 472,
-	ORB_Y0 = 48, ORB_Y1 = 144, ADDR_Y0 = 48, ADDR_Y1 = 78,
+	ORB_Y0 = 48, ORB_Y1 = 220, ADDR_Y0 = 48, ADDR_Y1 = 78,
 	INPUT_Y0 = 672, INPUT_Y1 = 728, INPUT_X0 = 10, INPUT_X1 = 470,
 	CONTENT_Y1 = 668,
 	COMPOSE_Y0 = 342, COMPOSE_Y1 = TR_WEB_KEYBOARD_Y - 6,
@@ -50,6 +50,10 @@ struct tr_web {
 	int follow;                    /* stick to the bottom of the chat */
 	unsigned seen_scroll[WEB_SLOTS];
 	double last_advance;
+
+	/* the mascot talks while an answer comes in, and for about as long as it would take to say it */
+	int replying, talk_rows;
+	double talk_start, talk_until;
 
 	/* the touch in progress */
 	int down, moved, pressed;

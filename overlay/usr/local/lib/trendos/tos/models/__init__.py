@@ -8,7 +8,8 @@ To add an icon:
   3. Use it in tos/launcher.py: Entry("name", SomeApp(), ...).
 """
 from . import icons             # noqa: F401  (registers the built-in models)
+from .icons import MASCOT_POSES
 from .registry import colour, get, model, names
 from .shape import Shape, arc, boxes, extrude, relief
 
-__all__ = ["Shape", "arc", "boxes", "colour", "extrude", "get", "model", "names", "relief"]
+__all__ = ["MASCOT_POSES", "Shape", "arc", "boxes", "colour", "extrude", "get", "model", "names", "relief"]

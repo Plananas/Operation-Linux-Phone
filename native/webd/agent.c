@@ -39,7 +39,7 @@ static const char TOOLS[] =
 	"]}]";
 
 static const char SYSTEM_PROMPT[] =
-	"You are the assistant built into TREND OS, a small home-made Linux system on an old Samsung phone. The screen shows "
+	"You are Blip, the small round assistant built into TREND OS, a small home-made Linux system on an old Samsung phone. The screen shows "
 	"46 characters across in a green terminal font, and the user types on a touch keyboard, so reply briefly and get to "
 	"the point. Use plain text; short paragraphs and simple '-' lists are fine. Avoid tables, and avoid emoji, which this "
 	"screen can't show. Links are tappable, so give the full address when one is useful.\n\n"
@@ -203,10 +203,10 @@ static void on_chunk(agent *a, const char *js, size_t n)
 	const int calls = r->n_calls;
 	gemini_read_chunk(js, n, r);
 	if (r->n_calls > calls)
-		wire_status(WEB_BUSY, "working...");
+		wire_status(WEB_BUSY, "Let me look into that...");
 	if (r->text.n > shown) {
 		sb_add(&a->display, r->text.s + shown, r->text.n - shown);
-		wire_status(WEB_BUSY, "replying...");
+		wire_status(WEB_BUSY, WEB_REPLYING);
 		maybe_draw_reply(a);
 	}
 }
@@ -414,7 +414,7 @@ static void run_turn(agent *a, const char *text)
 	freeze_reply(a);
 	int finished = 0;
 	for (int round = 0; round < MAX_ROUNDS && !finished; round++) {
-		wire_status(WEB_BUSY, "thinking...");
+		wire_status(WEB_BUSY, "Hmm, let me think...");
 		sb body = { 0 };
 		gemini_body(&body, system.s, TOOLS, &a->contents);
 		a->line.n = 0;
@@ -480,7 +480,7 @@ static void run_turn(agent *a, const char *text)
 		a->contents.s[a->contents.n] = '\0';
 	gemini_reply_clear(&a->reply);
 	freeze_reply(a);
-	wire_status(WEB_IDLE, "ready");
+	wire_status(WEB_IDLE, finished == 1 ? "Anything else?" : "Ask me anything");
 	sync_rows(a);
 }
 
@@ -497,7 +497,7 @@ static void reset_chat(agent *a)
 	struct tm tm;
 	localtime_r(&now, &tm);
 	strftime(a->started, sizeof(a->started), "%A %-d %B %Y", &tm);
-	wire_status(WEB_IDLE, "ready");
+	wire_status(WEB_IDLE, "Ask me anything");
 }
 
 void agent_main(const agent_config *cfg)

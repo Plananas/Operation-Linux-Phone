@@ -22,6 +22,9 @@ enum {
 
 enum { WEB_IDLE, WEB_BACKGROUND, WEB_BUSY };
 
+/* The agent's status while its answer is coming in: the mascot talks along. */
+#define WEB_REPLYING "Here's what I've got:"
+
 enum {
 	WEB_COLS = 46,                 /* text cells across */
 	WEB_ADVANCE = 10, WEB_ROW_H = 24, WEB_MARGIN = 10,

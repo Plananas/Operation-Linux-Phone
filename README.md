@@ -69,7 +69,7 @@ title bar.
   goes straight to the browser. Asking something from the web tab tells the agent which page you're on. Pages are
   drawn in the terminal font and pictures become shaded ASCII, like the icons. `<` `>` `R` are back, forward and
   reload; the Back key closes the app, as everywhere. There's no JavaScript, so Wikipedia and Hacker News work well
-  but sites built by scripts come up nearly empty; no cookies either, so nothing stays logged in. The chat needs an
+  but sites built by scripts come up nearly empty; no cookies either, so nothing stays logged in. Blip, a little round 3D mascot, sits at the top of the chat: it says hello on a new chat, looks around while it thinks and talks while an answer comes in. The chat needs an
   API key (below) and lasts until a restart; **new** starts another.
 The bottom of the home screen shows live stats: CPU, memory, battery, storage, network, uptime.
 

@@ -72,9 +72,12 @@ class WebCmd(Structure):
     _fields_ = [("kind", c_int), ("arg", c_int)]
 
 
+WEB_MASCOT_POSES = 7                    # TR_WEB_MASCOT_POSES
+
+
 class WebTheme(Structure):
     _fields_ = [("fonts", c_void_p * 3), ("accent", c_uint32), ("error", c_uint32), ("globe", Mesh),
-                ("small_view", View), ("big_view", View), ("atlas", Atlas)]
+                ("big_view", View), ("head_view", View), ("hello_view", View), ("atlas", Atlas), ("mascot", Mesh * WEB_MASCOT_POSES)]
 
 
 class MusicCmd(Structure):
@@ -383,10 +386,11 @@ def web_status_new():
     return status
 
 
-def web_theme(tables, accent, error, globe, small, big, tiles_atlas):
-    """The fonts (sizes 16, 19, 25, in order), colours, the globe and its two sizes. tables and what the mesh and
-    atlas point at must outlive it."""
-    return WebTheme((c_void_p * 3)(*map(ctypes.addressof, tables)), colour(accent), colour(error), globe, small, big, tiles_atlas)
+def web_theme(tables, accent, error, globe, big, head, hello, tiles_atlas, mascot):
+    """The fonts (sizes 16, 19, 25, in order), colours, the globe and its view, the mascot's two views, the tiles, and the
+    mascot's meshes, one per pose. tables and what the meshes and atlas point at must outlive it."""
+    return WebTheme((c_void_p * 3)(*map(ctypes.addressof, tables)), colour(accent), colour(error), globe, big, head, hello, tiles_atlas,
+                    (Mesh * WEB_MASCOT_POSES)(*mascot))
 
 
 def web_feed(status, which, data):

@@ -35,12 +35,20 @@ typedef struct {
 /* Where the keyboard starts, in app-area pixels: Python lays it over the screen there. */
 enum { TR_WEB_KEYBOARD_Y = 464 };
 
+/* The chat's mascot, Blip, is one mesh per pose, in this order: models/icons.py makes them. */
+enum {
+	TR_WEB_MASCOT_IDLE, TR_WEB_MASCOT_BLINK, TR_WEB_MASCOT_TALK, TR_WEB_MASCOT_TALK_MID, TR_WEB_MASCOT_TALK_WIDE,
+	TR_WEB_MASCOT_THINK, TR_WEB_MASCOT_HELLO, TR_WEB_MASCOT_POSES,
+};
+
 typedef struct {
 	const tr_glyph *font16, *font19, *font25;
 	tr_colour accent, error;
-	tr_mesh globe;
-	tr_view small_view, big_view;  /* a strip at the top of the chat, and the middle of an empty screen */
+	tr_mesh globe;                 /* the browser's while a page loads */
+	tr_view big_view;              /* the globe, in the middle of the screen */
+	tr_view head_view, hello_view; /* Blip: in the strip at the top of the chat, and on an empty one */
 	tr_atlas atlas;                /* the icons' tiles: pictures use them too */
+	tr_mesh mascot[TR_WEB_MASCOT_POSES];
 } tr_web_theme;
 
 size_t tr_web_size(void);

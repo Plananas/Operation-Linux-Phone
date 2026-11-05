@@ -954,9 +954,12 @@ static tr_web_theme web_test_theme(tr_glyph *glyphs, const uint8_t *tiles)
 	static const float pts[3] = { 0, 0, -1 }, nrm[3] = { 0, 0, -1 }, cen[3] = { 0, 0, -1 };
 	static const int32_t start[2] = { 0, 1 }, col[1] = { 0 };
 	const tr_mesh mesh = { pts, start, nrm, cen, col, 1 };
-	const tr_view small = { 21.0f, 0.66f, -4.5f, { -2.5f, 3.0f, -5.0f }, 16, 8, 13 };
+	const tr_view small = { 38.0f, 0.66f, -4.5f, { -2.5f, 3.0f, -5.0f }, 28, 14, 13 };
 	const tr_view big = { 56.0f, 0.66f, -4.5f, { -2.5f, 3.0f, -5.0f }, 40, 22, 13 };
-	return (tr_web_theme){ glyphs, glyphs, glyphs, 0xff00ff00u, 0xff0000ffu, mesh, small, big, { tiles, 12, 8 } };
+	tr_web_theme theme = { glyphs, glyphs, glyphs, 0xff00ff00u, 0xff0000ffu, mesh, big, small, big, { tiles, 12, 8 }, { mesh } };
+	for (int i = 0; i < TR_WEB_MASCOT_POSES; i++)
+		theme.mascot[i] = mesh;
+	return theme;
 }
 
 static void test_web(void)
@@ -1094,7 +1097,7 @@ static void test_web(void)
 	tr_web_feed(st, TR_WEB_CHAT, frame, n);
 	tr_web_set_tab(s, TR_WEB_CHAT);
 	tr_web_advance(s, st, 7.0);
-	const int bottom = 300 * WEB_ROW_H - (668 - 144);
+	const int bottom = 300 * WEB_ROW_H - (668 - 220);
 	CHECK(tr_web_scroll_of(s, TR_WEB_CHAT) == bottom);
 	tr_web_touch(s, s, st, TR_WEB_DOWN, 240, 300, 7.0);
 	tr_web_touch(s, s, st, TR_WEB_MOVE, 240, 400, 7.2);
@@ -1105,6 +1108,40 @@ static void test_web(void)
 	tr_web_feed(st, TR_WEB_CHAT, frame, n);
 	tr_web_advance(s, st, 9.0);
 	CHECK(tr_web_scroll_of(s, TR_WEB_CHAT) == bottom - 100);
+
+	/* The mascot is quiet when idle, and talks through an answer and on for about as long as it takes to say it. */
+	const uint8_t idle_status[] = { WEB_IDLE, 'o', 'k' };
+	uint8_t talk_status[sizeof(WEB_REPLYING)] = { WEB_BUSY };
+	memcpy(talk_status + 1, WEB_REPLYING, sizeof(WEB_REPLYING) - 1);
+	n = put_frame(frame, WEB_F_STATUS, idle_status, sizeof(idle_status));
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	CHECK(tr_web_advance(s, st, 100.02) == tr_web_advance(s, st, 100.12));
+	n = put_frame(frame, WEB_F_STATUS, talk_status, sizeof(talk_status));
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	CHECK(tr_web_advance(s, st, 200.02) != tr_web_advance(s, st, 200.12));
+	tr_web_render(s, st, &theme, 200.12, dst);
+	n = 0;
+	for (int i = 0; i < 10; i++)
+		n += put_row(frame + n, 301 + i, art_or_text, 1);
+	n += put_frame(frame + n, WEB_F_STATUS, idle_status, sizeof(idle_status));
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 200.2);                      /* the rows and the end of the reply came together */
+	tr_web_advance(s, st, 200.3);
+	CHECK(tr_web_advance(s, st, 200.42) != tr_web_advance(s, st, 200.52));
+	CHECK(tr_web_advance(s, st, 202.02) == tr_web_advance(s, st, 202.12));
+	n = put_frame(frame, WEB_F_STATUS, talk_status, sizeof(talk_status));
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 300.0);
+	n = 0;
+	for (int i = 0; i < 10; i++)
+		n += put_row(frame + n, 311 + i, art_or_text, 1);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 300.1);
+	n = put_frame(frame, WEB_F_STATUS, idle_status, sizeof(idle_status));
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	CHECK(tr_web_advance(s, st, 303.02) != tr_web_advance(s, st, 303.12));
+	tr_web_render(s, st, &theme, 303.12, dst);
+	CHECK(tr_web_advance(s, st, 305.02) == tr_web_advance(s, st, 305.12));
 	free(s);
 	free(st);
 	free(px);

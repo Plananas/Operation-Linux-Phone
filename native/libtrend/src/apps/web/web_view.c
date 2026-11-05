@@ -101,14 +101,25 @@ static void draw_rows(tr_surface dst, const web_doc *d, const tr_web_theme *t, i
 	}
 }
 
-/* ---- the globe ---- */
+/* ---- the globe and the mascot ---- */
+
+/* Turned about the upright, then tipped towards the viewer, then rolled. */
+static void draw_turned(tr_surface dst, const tr_web_theme *t, tr_mesh mesh, tr_view view, int x, int y, double yaw, double tilt, double roll)
+{
+	const float c = cosf((float)fmod(yaw, 6.283185307)), s = sinf((float)fmod(yaw, 6.283185307));
+	const float ct = cosf((float)tilt), st = sinf((float)tilt), cr = cosf((float)roll), sr = sinf((float)roll);
+	const float m[9] = { c, 0.0f, s, st * s, ct, -st * c, -ct * s, st, ct * c };
+	const float r[9] = {
+		cr * m[0] - sr * m[3], cr * m[1] - sr * m[4], cr * m[2] - sr * m[5],
+		sr * m[0] + cr * m[3], sr * m[1] + cr * m[4], sr * m[2] + cr * m[5],
+		m[6], m[7], m[8],
+	};
+	tr_mesh_draw(mesh, r, view, t->atlas, dst, x, y);
+}
 
 static void draw_globe(tr_surface dst, const tr_web_theme *t, tr_view view, int x, int y, double angle)
 {
-	const float a = (float)fmod(angle, 6.283185307), c = cosf(a), s = sinf(a);
-	const float ct = cosf(0.32f), st = sinf(0.32f);
-	const float r[9] = { c, 0.0f, s, st * s, ct, -st * c, -ct * s, st, ct * c };
-	tr_mesh_draw(t->globe, r, view, t->atlas, dst, x, y);
+	draw_turned(dst, t, t->globe, view, x, y, angle, 0.32, 0.0);
 }
 
 /* Slow while idle, fast while there's work on. Whole turns of an idle spin mustn't jump when it speeds up, but a
@@ -116,6 +127,68 @@ static void draw_globe(tr_surface dst, const tr_web_theme *t, tr_view view, int 
 static double spin(int busy, double now)
 {
 	return now * (busy ? 3.2 : 0.6);
+}
+
+typedef enum { MOOD_IDLE, MOOD_THINK, MOOD_TALK, MOOD_HELLO } web_mood;
+
+static web_mood mood_of(const tr_web *s, const web_doc *d, double now)
+{
+	if (now < s->talk_until)
+		return MOOD_TALK;
+	if (d->state == WEB_BUSY)
+		return MOOD_THINK;
+	return d->n_rows ? MOOD_IDLE : MOOD_HELLO;
+}
+
+/* Mouths don't open in a regular beat when people talk, so this one opens and closes through a little pattern. */
+static int talking_pose(double now)
+{
+	static const uint8_t PATTERN[] = {
+		TR_WEB_MASCOT_TALK, TR_WEB_MASCOT_TALK_MID, TR_WEB_MASCOT_TALK_WIDE, TR_WEB_MASCOT_TALK_MID, TR_WEB_MASCOT_TALK,
+		TR_WEB_MASCOT_IDLE, TR_WEB_MASCOT_TALK_MID, TR_WEB_MASCOT_TALK, TR_WEB_MASCOT_IDLE, TR_WEB_MASCOT_TALK,
+		TR_WEB_MASCOT_TALK_MID, TR_WEB_MASCOT_TALK_WIDE, TR_WEB_MASCOT_TALK_WIDE, TR_WEB_MASCOT_TALK_MID, TR_WEB_MASCOT_IDLE,
+	};
+	return PATTERN[(size_t)(now * 13.0) % (sizeof(PATTERN) / sizeof(PATTERN[0]))];
+}
+
+static int mascot_pose(web_mood mood, double now)
+{
+	const int blinking = fmod(now, 4.3) < 0.22;
+	switch (mood) {
+	case MOOD_TALK:
+		return talking_pose(now);
+	case MOOD_THINK:
+		return blinking ? TR_WEB_MASCOT_BLINK : TR_WEB_MASCOT_THINK;
+	case MOOD_HELLO:
+		return blinking ? TR_WEB_MASCOT_BLINK : TR_WEB_MASCOT_HELLO;
+	default:
+		return blinking ? TR_WEB_MASCOT_BLINK : TR_WEB_MASCOT_IDLE;
+	}
+}
+
+/* It moves its whole head: turning is what shows the shape, so it's never quite still. */
+static void draw_mascot(tr_surface dst, const tr_web_theme *t, tr_view view, int x, int y, web_mood mood, double now)
+{
+	double yaw = 0.32 * sin(now * 0.9), tilt = 0.06 + 0.05 * sin(now * 0.6), roll = 0.04 * sin(now * 0.7), bob = 0.0;
+	switch (mood) {
+	case MOOD_TALK:
+		yaw = 0.24 * sin(now * 1.9);
+		tilt = 0.08 + 0.09 * fabs(sin(now * 4.5));
+		roll = 0.06 * sin(now * 1.3);
+		bob = 3.0 * fabs(sin(now * 4.5));
+		break;
+	case MOOD_THINK:
+		yaw = 0.42 * sin(now * 1.3);
+		tilt = -0.14;
+		roll = 0.1 * sin(now * 0.9);
+		break;
+	case MOOD_HELLO:
+		roll = fmod(now, 6.0) < 2.0 ? 0.2 * sin(now * 7.0) : roll;
+		break;
+	default:
+		break;
+	}
+	draw_turned(dst, t, t->mascot[mascot_pose(mood, now)], view, x, y - (int)bob, yaw, tilt, roll);
 }
 
 static void centre_text(tr_surface dst, const tr_glyph *font, const char *s, int y, tr_colour c)
@@ -150,14 +223,49 @@ static void draw_tabs(tr_surface dst, const tr_web *s, const tr_web_status *st, 
 	}
 }
 
-static void draw_chat_head(tr_surface dst, const web_doc *d, const tr_web_theme *t, double now)
+/* What Blip says, in a bubble with its tail towards it. It's only ever short; anything longer than two lines (or
+ * webd gone wrong) is cut. */
+static void draw_bubble(tr_surface dst, const tr_web_theme *t, const char *text, tr_colour colour)
 {
-	const int busy = d->state == WEB_BUSY;
-	draw_globe(dst, t, t->small_view, 8, ORB_Y0, spin(busy, now));
-	const int x = 8 + t->small_view.cols * t->atlas.cw + 12;
-	put_text(dst, t->font25, "TREND agent", x, ORB_Y0 + 14, t->accent);
-	put_text(dst, t->font19, d->status[0] ? d->status : "ready", x, ORB_Y0 + 50, busy ? TEXT : DIM);
+	enum { X0 = 234, X1 = 474, Y0 = ORB_Y0 + 30, Y1 = ORB_Y0 + 132, TAIL = 12, PER_LINE = 21 };
+	const int mid = (Y0 + Y1) / 2;
+	tr_fill_round_rect(dst, (tr_rect){ Y0, Y1, X0, X1 }, 10, t->accent);
+	tr_fill_round_rect(dst, (tr_rect){ Y0 + 2, Y1 - 2, X0 + 2, X1 - 2 }, 8, PANEL);
+	for (int i = 0; i < TAIL; i++) {
+		const int half = TAIL - i;
+		tr_fill_rect(dst, (tr_rect){ mid - half, mid + half, X0 - i, X0 - i + 1 }, t->accent);
+		if (half > 2)
+			tr_fill_rect(dst, (tr_rect){ mid - half + 2, mid + half - 2, X0 - i + 3, X0 - i + 4 }, PANEL);
+	}
+	put_text(dst, t->font19, "Blip", X0 + 14, Y0 + 6, t->accent);
+	const int n = (int)strlen(text), first = tr_min(n, PER_LINE), second = tr_min(n - first, PER_LINE);
+	tr_draw_text(dst, t->font19, (const uint8_t *)text, first, X0 + 14.0f, Y0 + 34, colour);
+	if (second)
+		tr_draw_text(dst, t->font19, (const uint8_t *)text + first, second, X0 + 14.0f, Y0 + 60, colour);
+}
+
+static void draw_chat_head(tr_surface dst, const tr_web *s, const web_doc *d, const tr_web_theme *t, double now)
+{
+	const web_mood mood = mood_of(s, d, now);
+	const tr_view v = t->head_view;
+	draw_mascot(dst, t, v, 4, ORB_Y0 + 2, mood, now);
+	/* It can still be talking after the answer has all arrived, so it's still saying this. */
+	const char *says = mood == MOOD_TALK ? WEB_REPLYING : d->status[0] ? d->status : "Ask me anything";
+	draw_bubble(dst, t, says, mood == MOOD_IDLE ? DIM : TEXT);
 	tr_fill_rect(dst, (tr_rect){ ORB_Y1 - 2, ORB_Y1 - 1, 0, dst.w }, FRAME);
+}
+
+/* A new chat: just Blip, large, saying hello. */
+static void draw_chat_empty(tr_surface dst, const tr_web *s, const web_doc *d, const tr_web_theme *t, double now)
+{
+	const tr_view v = t->hello_view;
+	const int w = v.cols * t->atlas.cw, h = v.rows * t->atlas.ch;
+	const int y = ORB_Y0 + (CONTENT_Y1 - ORB_Y0 - h - 110) / 2;
+	tr_fill_rect(dst, (tr_rect){ ORB_Y0, CONTENT_Y1, 0, dst.w }, BG);
+	draw_mascot(dst, t, v, (dst.w - w) / 2, y, mood_of(s, d, now), now);
+	centre_text(dst, t->font25, "Hi, I'm Blip!", y + h + 6, t->accent);
+	centre_text(dst, t->font19, d->status[0] ? d->status : "Ask me anything", y + h + 44, TEXT);
+	centre_text(dst, t->font19, "or type a web address to browse", y + h + 72, DIM);
 }
 
 static void draw_address(tr_surface dst, const web_doc *d, const tr_web_theme *t)
@@ -209,7 +317,7 @@ static void draw_compose(tr_surface dst, const tr_web *s, const tr_web_theme *t)
 	}
 }
 
-/* An empty screen, or a page on its way: the globe large in the middle. */
+/* A page on its way: the globe large in the middle. */
 static void draw_big_globe(tr_surface dst, const tr_web_theme *t, int y0, int y1, const char *line1, const char *line2, tr_colour c1, double now, int busy)
 {
 	const int w = t->big_view.cols * t->atlas.cw, h = t->big_view.rows * t->atlas.ch;
@@ -232,9 +340,10 @@ void tr_web_render(const tr_web *s, const tr_web_status *st, const tr_web_theme 
 	draw_rows(dst, d, t, y0, CONTENT_Y1, (int)s->scroll[s->tab]);
 	draw_tabs(dst, s, st, t);
 	if (s->tab == TR_WEB_CHAT) {
-		draw_chat_head(dst, d, t, now);
-		if (!d->n_rows)
-			draw_big_globe(dst, t, y0, CONTENT_Y1, "Ask me anything", "or type a web address to browse", TEXT, now, busy);
+		if (d->n_rows || s->composing)
+			draw_chat_head(dst, s, d, t, now);
+		else
+			draw_chat_empty(dst, s, d, t, now);
 	} else {
 		draw_address(dst, d, t);
 		if (busy)

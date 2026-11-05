@@ -27,6 +27,8 @@ void tr_web_status_init(tr_web_status *out)
 	out->version = 1;
 }
 
+static const double TALK_S_PER_ROW = 0.45, TALK_MIN_S = 0.8, TALK_MAX_S = 10.0;
+
 int web_content_y(int tab)
 {
 	return tab == TR_WEB_CHAT ? ORB_Y1 : ADDR_Y1;
@@ -185,6 +187,23 @@ static double clamp_scroll(double v, double max)
 	return v < 0.0 ? 0.0 : v > max ? max : v;
 }
 
+static void follow_reply(tr_web *s, const tr_web_status *st, double now)
+{
+	const web_doc *d = &st->docs[TR_WEB_CHAT];
+	const int replying = d->state == WEB_BUSY && !strcmp(d->status, WEB_REPLYING);
+	if (replying && !s->replying) {
+		s->talk_rows = d->n_rows;
+		s->talk_start = now;
+	}
+	s->replying = replying;
+	if (replying) {
+		const double spoken = s->talk_start + TALK_S_PER_ROW * (d->n_rows - s->talk_rows);
+		s->talk_until = fmax(now + TALK_MIN_S, fmin(spoken, now + TALK_MAX_S));
+	}
+	if (!d->n_rows)
+		s->talk_until = 0.0;
+}
+
 uint64_t tr_web_advance(tr_web *s, const tr_web_status *st, double now)
 {
 	const double dt = s->last_advance > 0.0 && now > s->last_advance ? now - s->last_advance : 0.0;
@@ -208,11 +227,13 @@ uint64_t tr_web_advance(tr_web *s, const tr_web_status *st, double now)
 	s->scroll[TR_WEB_CHAT] = clamp_scroll(s->scroll[TR_WEB_CHAT], chat_max);
 	s->scroll[TR_WEB_PAGE] = clamp_scroll(s->scroll[TR_WEB_PAGE], max_scroll(st, TR_WEB_PAGE));
 
-	/* The globe turns on the chat; the browser only needs it while loading. */
+	follow_reply(s, st, now);
+
+	/* The mascot is always moving on the chat; the browser only needs its globe while loading. */
 	const web_doc *d = &st->docs[s->tab];
 	double fps = 0.0;
 	if (s->tab == TR_WEB_CHAT)
-		fps = d->state == WEB_BUSY ? 20.0 : 5.0;
+		fps = d->state == WEB_BUSY || now < s->talk_until ? 15.0 : 5.0;
 	else if (d->state == WEB_BUSY)
 		fps = 20.0;
 	const uint64_t tick = fps > 0.0 ? (uint64_t)(now * fps) : 0;
