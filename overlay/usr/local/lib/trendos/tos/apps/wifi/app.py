@@ -176,6 +176,10 @@ class WifiApp(App):
             if ev == "up":
                 self._to_list()
 
+    def second_finger(self, ev, x, y):
+        if self.mode == "connect":
+            self.kb.touch(ev, x, y, finger=1)
+
     def _to_list(self):
         self.mode, self.kb = "list", None
         self.next_status = self.next_scan = 0.0

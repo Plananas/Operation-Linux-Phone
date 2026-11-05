@@ -27,6 +27,7 @@ from .flight import Flight, badge_angles, carousel_angles
 from .volumebar import VolumeBar, level_at
 
 VOLUME_KEYS = (KEY_VOLDOWN, KEY_VOLUP)
+SECOND_FINGER = {"down2": "down", "move2": "move", "up2": "up"}
 VOLUME_REPEAT_AFTER, VOLUME_REPEAT_EVERY = 0.4, 0.12    # seconds, holding a volume key
 
 
@@ -415,6 +416,10 @@ class Shell:
     def handle(self, ev, now):
         kind, x, y, t = ev
         self.last_input = now
+        if kind in SECOND_FINGER:
+            if self.mode == "app":
+                self.app.second_finger(SECOND_FINGER[kind], x, y)
+            return
         if self.mode != "halt":
             if kind == "key" and x in VOLUME_KEYS:
                 if self.mode == "app" and self.app.wants_volume_keys():

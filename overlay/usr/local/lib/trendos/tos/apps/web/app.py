@@ -29,11 +29,16 @@ BIG_COLS, BIG_ROWS, BIG_K = 40, 22, 50.0
 BLIP_LIGHT = (-1.5, 2.0, -7.0)          # nearer the front than the usual light, or its mouth would be in the dark
 TEXT_MAX = 1000
 READ_PER_FRAME = 8                      # reads of up to 64 KB each, so that a big page can't stall a frame
-LOOKS_LIKE_ADDRESS = re.compile(r"^(https?://\S+|[\w-]+(\.[\w-]+)*\.[a-zA-Z]{2,}(:\d+)?(/\S*)?|\d+\.\d+\.\d+\.\d+(:\d+)?(/\S*)?)$")
+LOOKS_LIKE_ADDRESS = re.compile(r"^(https?://\S+|[\w-]+(\.[\w-]+)*\.[a-zA-Z]{2,}(:\d+)?(/\S*)?|\d+\.\d+\.\d+\.\d+(:\d+)?(/\S*)?)$", re.I)
 
 
 def is_address(text):
     return bool(LOOKS_LIKE_ADDRESS.match(text.strip()))
+
+
+def lower_scheme(address):
+    """The keyboard capitalises the start of what's typed, which is harmless except here."""
+    return re.sub(r"^https?://", lambda m: m.group().lower(), address, flags=re.I)
 
 
 def one_line(text):
@@ -143,7 +148,8 @@ class WebApp(App):
     # ---- typing ----
     def _open_keyboard(self, field=None):
         self._field = field
-        self._kb = Keyboard(on_done=self._typed, on_cancel=self._close_keyboard)
+        self._kb = Keyboard(on_done=self._typed, on_cancel=self._close_keyboard, on_change=self._show_compose,
+                            prose=field is None)      # a form box could want anything, like a password
         self._show_compose()
 
     def _show_compose(self):
@@ -166,7 +172,7 @@ class WebApp(App):
         elif not text.strip():
             pass
         elif is_address(text):
-            self._open_in_browser(text.strip())
+            self._open_in_browser(lower_scheme(text.strip()))
         else:
             self._ask(text.strip())
 
@@ -181,10 +187,9 @@ class WebApp(App):
     # ---- the shell's calls ----
     def touch(self, ev, x, y):
         if self._kb is not None:
-            if y >= KB_Y:
-                self._kb.touch(ev, x, y)
-                if self._kb is not None:
-                    self._show_compose()
+            self._kb.touch(ev, x, y)
+            if self._kb is not None:
+                self._show_compose()
             return
         cmd = native.web_touch(self._state, self._status, ev, x, y - TOP)
         on_page = native.web_tab(self._state) == native.WEB_PAGE
@@ -210,6 +215,12 @@ class WebApp(App):
             self._browser.send("R")
         elif cmd.kind == native.WEB_STOP_PAGE:
             self._browser.send("X")
+
+    def second_finger(self, ev, x, y):
+        if self._kb is not None:
+            self._kb.touch(ev, x, y, finger=1)
+            if self._kb is not None:
+                self._show_compose()
 
     def key(self, now):
         self._pump()

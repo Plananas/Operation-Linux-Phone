@@ -34,6 +34,9 @@ class App:
     def touch(self, ev, x, y):
         """Touch event inside the app area: ev is "down", "move" or "up" (screen coordinates)."""
 
+    def second_finger(self, ev, x, y):
+        """The same for a second finger on the screen while the first is down. Most apps ignore it."""
+
     def key(self, now):
         """A value that changes whenever the screen must be redrawn (compared per page)."""
         return "static"

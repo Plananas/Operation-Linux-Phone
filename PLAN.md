@@ -40,7 +40,7 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, KERNEL p20, RECOVERY p21, system p24
 | `gfx`, `ui` | fonts, `to_rgbx`; shared look (`native_card` fast, `card`, `Keys`) |
 | `render` | `draw_view(buf, shape, m9, K, cols, rows, x, y, tiles)`, K ≈ cols*1.5 fills; `card_tiles`, `MINI`, `matrix(tilt,a,b,c)`. Moving parts: update `shape.pts/fnrm/fcen` (see `Clock3D`) |
 | `models/` | `shape.py` (`Shape`, `boxes`, `extrude`, `arc`, `relief`), `icons.py` (`@model(name, colour)`), `registry.py` |
-| `keyboard` | `Keyboard(on_done, on_cancel, text)`, `KB_Y` |
+| `keyboard` | `Keyboard(on_done, on_cancel, text, on_change, prose)`, `KB_Y`. A second finger reaches it through `App.second_finger`, and its landing types the first finger's key. `prose=True` adds sentence capitals, `. ` for a double space and going back to letters after a symbol: keep it off for passwords |
 | `apps/` | `base.App`, one folder each. C in `native/libtrend/src/apps/`: calculator, music, files, web. Python: wifi (threads + keyboard example), radio (worker thread, 30 fps numpy), clock (alarms via `background()`), ssh, bluetooth, spotify (shelved) |
 | `shell`, `launcher`, `flight`, `transition`, `power`, `stats`, `title`, `volumebar`, `boot` | main loop and region cache by `app.key()`; `Entry(model, app, opens, name, phase)`; icon flight to title badge (automatic); slide; power menu; stats; title; boot handover |
 
@@ -66,7 +66,7 @@ Rules:
   `python3 bootimg/mkramdisk.py bootimg/ramdisk busybox.static rd.gz logo.rgbx=… bin/fbpan=… bin/bootanim=… bootanim.bin=… bin/charger=… charger.bin=…` then
   `python3 bootimg/repack_keep_dt.py firmware/stock/boot.img rd.gz firmware/trendos/boot-nativeN.img`. Flash: `dd of=/dev/mmcblk0p20 conv=fsync` on phone, verify sha256, reboot (fallback `heimdall flash --KERNEL img`).
 - **Rescue**: init falls back to RNDIS + `telnet 192.168.42.129` if Alpine fails or `/data/alpine/.native-disable` exists. BootROM: battery out, hold Vol-Up, plug USB → `1782:4d00` (`tools/bootloader/bootrom_hello.py`; flashing needs FDL1/FDL2, not obtained).
-- **Phone tools** (`tools/phone/`, copy to `/tmp`, run with `python3 -I`): `bench.py` (frame costs, shell CPU: run before and after), `vfpcheck.c` (do NEON registers survive hot-plug; compile on the phone), `cpuwho.py` (what's using the CPU right now, by thread, and what's being spawned; no copying needed: `ssh root@192.168.42.129 python3 -I - < tools/phone/cpuwho.py`), `drive.py` (injected input), `shot.py` (screenshot), `mkchime.py`, `mkjungle.py` (32-bit ints and memory limit it: watch numpy overflow).
+- **Phone tools** (`tools/phone/`, copy to `/tmp`, run with `python3 -I`): `bench.py` (frame costs, shell CPU: run before and after), `vfpcheck.c` (do NEON registers survive hot-plug; compile on the phone), `test_keyboard.py` (keyboard and two-finger input; how to run it is at its top), `cpuwho.py` (what's using the CPU right now, by thread, and what's being spawned; no copying needed: `ssh root@192.168.42.129 python3 -I - < tools/phone/cpuwho.py`), `drive.py` (injected input), `shot.py` (screenshot), `mkchime.py`, `mkjungle.py` (32-bit ints and memory limit it: watch numpy overflow).
 - **UI tests**: inject into event1 (SLOT 0, TRACKING_ID n, X, Y, SYN … TRACKING_ID -1) / event0. Screenshot = `/dev/fb0` at `pan_y*480*4` (`/sys/class/graphics/fb0/pan`), RGBX. Wake first with Home.
 
 ## 6. Subsystems
