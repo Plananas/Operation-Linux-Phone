@@ -59,13 +59,13 @@ class MusicApp(App):
             native.player_command(self._player, cmd)
 
     def touch(self, ev, x, y):
-        self._send(native.music_touch(self._state, self._status, ev, x, y - TOP))
+        self._send(native.music_touch(self._state, self._status, self._library, ev, x, y - TOP))
 
     def key(self, now):
         if self._player is not None:
             native.player_status(self._player, self._status)
             native.player_library(self._player, self._library)
-        return native.music_frame_key(self._state, self._status, now)
+        return native.music_frame_key(self._state, self._status, self._library, now)
 
     def render(self, now):
         if self._buf is None:

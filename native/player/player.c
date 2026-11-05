@@ -19,7 +19,7 @@
 #include "player.h"
 
 enum {
-	PATH_CAP = 256,
+	PATH_CAP = 512,
 	BLOCK_FRAMES = 1024,
 	MAX_CHANNELS = 8,
 	SCOPE_DECIMATE = 4,
@@ -109,9 +109,27 @@ static int is_audio_file(const char *name)
 	return 0;
 }
 
+/* How much of a path is its folder. */
+static int folder_len(const char *path)
+{
+	return (int)(strrchr(path, '/') - path);
+}
+
+/* By folder and then by name, ignoring case, so that each folder's tracks are together. A folder sorts
+ * before anything inside it, so the music folder's own tracks come first. Names that differ only by
+ * case still need an order, or two such folders could mix. */
 static int compare_paths(const void *a, const void *b)
 {
-	return strcasecmp((const char *)a, (const char *)b);
+	const char *x = a, *y = b;
+	const int nx = folder_len(x), ny = folder_len(y);
+	int order = strncasecmp(x, y, (size_t)tr_min(nx, ny));
+	if (!order)
+		order = nx - ny;
+	if (!order)
+		order = strncmp(x, y, (size_t)nx);
+	if (!order)
+		order = strcasecmp(x + nx, y + ny);
+	return order ? order : strcmp(x + nx, y + ny);
 }
 
 static int scan_dir(const char *dir, track_path *out, int n, int depth)
@@ -139,6 +157,30 @@ static int scan_dir(const char *dir, track_path *out, int n, int depth)
 	return n;
 }
 
+/* Mark where each folder starts and ends in the sorted paths. Returns how many tracks it could keep:
+ * past TR_MUSIC_MAX_FOLDERS, the rest are left out of the list. */
+static int find_folders(tr_music_library *lib, const track_path *paths, int n, const char *dir)
+{
+	const int dir_len = (int)strlen(dir);
+	lib->n_folders = 1;
+	lib->folders[0] = (tr_music_folder){ .first = 0 };
+	for (int i = 0; i < n; i++) {
+		const int len = folder_len(paths[i]);
+		const int same = i ? len == folder_len(paths[i - 1]) && !strncmp(paths[i], paths[i - 1], (size_t)len) : len == dir_len;
+		if (!same) {
+			if (lib->n_folders == TR_MUSIC_MAX_FOLDERS)
+				return i;
+			char name[PATH_CAP];
+			snprintf(name, sizeof(name), "%.*s", len - dir_len - 1, paths[i] + dir_len + 1);
+			tr_music_folder *f = &lib->folders[lib->n_folders++];
+			*f = (tr_music_folder){ .first = i };
+			tr_music_folder_name(name, f->name, sizeof(f->name));
+		}
+		lib->folders[lib->n_folders - 1].n++;
+	}
+	return n;
+}
+
 /* Rebuild the list, keeping the playing track's place in it. */
 static void rescan(tr_player *p, int current)
 {
@@ -149,6 +191,7 @@ static void rescan(tr_player *p, int current)
 	qsort(p->paths, (size_t)p->n_paths, sizeof(track_path), compare_paths);
 
 	pthread_mutex_lock(&p->lock);
+	p->n_paths = find_folders(&p->library, p->paths, p->n_paths, p->dir);
 	p->library.n = p->status.n_tracks = p->n_paths;
 	p->status.track = -1;
 	for (int i = 0; i < p->n_paths; i++) {
@@ -291,11 +334,26 @@ static void publish_tags(tr_player *p, int index)
 	pthread_mutex_unlock(&p->lock);
 }
 
-/* Open the track at index, or the next one that will open. Returns whether one did. */
+/* The bounds of the playlist that a track is in: its folder. With no track, the whole library. Only
+ * this thread writes the library, so it can read it without the lock. */
+static int playlist_first(const tr_player *p, int track)
+{
+	const int folder = tr_music_folder_of(&p->library, track);
+	return folder < 0 ? 0 : p->library.folders[folder].first;
+}
+
+static int playlist_end(const tr_player *p, int track)
+{
+	const int folder = tr_music_folder_of(&p->library, track);
+	return folder < 0 ? p->n_paths : p->library.folders[folder].first + p->library.folders[folder].n;
+}
+
+/* Open the track at index, or the next one in its playlist that will open. Returns whether one did. */
 static int open_track(tr_player *p, int index)
 {
 	close_track(p);
-	for (int i = index; i < p->n_paths; i++) {
+	const int end = playlist_end(p, index);
+	for (int i = index; i < end; i++) {
 		memset(&p->info, 0, sizeof(p->info));
 		p->file = sf_open(p->paths[i], SFM_READ, &p->info);
 		if (p->file && p->info.channels <= MAX_CHANNELS) {
@@ -439,7 +497,7 @@ static void play_block(tr_player *p, int track)
 	int16_t stereo[BLOCK_FRAMES * 2], scope[TR_MUSIC_SCOPE];
 	const int frames = (int)sf_readf_float(p->file, source, BLOCK_FRAMES);
 	if (frames <= 0) {                     /* the end of the track */
-		if (track + 1 < p->n_paths)
+		if (track + 1 < playlist_end(p, track))
 			play_track(p, track + 1);
 		else
 			stop_playing(p, 1);
@@ -533,11 +591,11 @@ static void apply_requests(tr_player *p, const requests *r, int state, int track
 		play_track(p, r->track);
 	else if (r->toggle)
 		toggle(p, state, track);
-	else if (r->next && track + 1 < p->n_paths)
+	else if (r->next && track + 1 < playlist_end(p, track))
 		play_track(p, track + 1);
-	else if (r->prev && p->file && (position > RESTART_AFTER_S || track <= 0))
+	else if (r->prev && p->file && (position > RESTART_AFTER_S || track <= playlist_first(p, track)))
 		seek_to(p, 0);
-	else if (r->prev && track > 0)
+	else if (r->prev && track > playlist_first(p, track))
 		play_track(p, track - 1);
 	if (r->seek >= 0)
 		seek_to(p, r->seek);

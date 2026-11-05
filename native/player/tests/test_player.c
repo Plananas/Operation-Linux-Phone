@@ -108,9 +108,100 @@ static void test_over_full_scale(void)
 		exit(EXIT_FAILURE);
 }
 
+/* A tone in a new file, making its folder. */
+static void add_tone(const char *dir, const char *folder, const char *name)
+{
+	char path[700];
+	snprintf(path, sizeof(path), "%s/%s", dir, folder);
+	mkdir(path, 0755);
+	snprintf(path, sizeof(path), "%s/%s/%s", dir, folder, name);
+	write_tone(path, SF_FORMAT_WAV | SF_FORMAT_PCM_16, 2, 44100, 1);
+}
+
+/* Folders are playlists: their tracks stay together, and playing stays inside one. */
+static void test_folders(void)
+{
+	char dir[] = "/tmp/test-player-XXXXXX", clean[160], long_folder[121], long_name[185];
+	if (!mkdtemp(dir))
+		exit(EXIT_FAILURE);
+	add_tone(dir, ".", "z_loose.wav");
+	add_tone(dir, "band", "one.wav");
+	add_tone(dir, "band", "two.wav");
+	add_tone(dir, "band", "y_last.wav");
+	add_tone(dir, "band/m_live", "inner.wav");         /* sorts between band's own tracks by full path */
+	add_tone(dir, "Band", "other.wav");                /* differs only by case */
+	add_tone(dir, "a_first", "x.wav");
+	mkdir(strcat(strcpy(clean, dir), "/empty"), 0755);
+	memset(long_folder, 'f', 120);                     /* together, longer than a single name can be */
+	long_folder[120] = '\0';
+	memset(long_name, 'n', 180);
+	strcpy(long_name + 180, ".wav");
+	add_tone(dir, long_folder, long_name);
+
+	tr_player *p = tr_player_new(dir, "null");
+	tr_music_status st;
+	static tr_music_library lib;
+	CHECK(wait_for(p, found_tracks, &st));
+	tr_player_library(p, &lib);
+	CHECK(lib.n == 8);
+	CHECK(lib.n_folders == 6);
+	CHECK(lib.folders[0].first == 0 && lib.folders[0].n == 1 && lib.folders[0].name[0] == '\0');
+	CHECK(strcmp(lib.names[0], "z loose") == 0);
+	CHECK(strcmp(lib.folders[1].name, "a first") == 0 && lib.folders[1].first == 1 && lib.folders[1].n == 1);
+	const tr_music_folder *upper = &lib.folders[2], *lower = &lib.folders[3], *nested = &lib.folders[4];
+	CHECK(strcmp(upper->name, "Band") == 0 && upper->first == 2 && upper->n == 1);
+	CHECK(strcmp(lower->name, "band") == 0 && lower->first == 3 && lower->n == 3);
+	CHECK(strcmp(lib.names[3], "one") == 0 && strcmp(lib.names[4], "two") == 0 && strcmp(lib.names[5], "y last") == 0);
+	CHECK(strcmp(nested->name, "band/m live") == 0 && nested->first == 6 && nested->n == 1);
+
+	/* Playing runs to the end of the folder and stops there, without the next folder's tracks. */
+	cmd(p, TR_CMD_PLAY_TRACK, 3);
+	int last = -1;
+	for (int i = 0; i < 3000; i++) {
+		tr_player_status(p, &st);
+		if (st.track > last)
+			last = st.track;
+		if (st.state == TR_PLAYER_STOPPED && last >= 0)
+			break;
+		sleep_ms(1);
+	}
+	CHECK(last == 5);
+	CHECK(st.state == TR_PLAYER_STOPPED);
+
+	/* Next at the folder's end and previous at its start stay put. */
+	cmd(p, TR_CMD_PLAY_TRACK, 5);
+	cmd(p, TR_CMD_RELEASE, 0);
+	tr_player_status(p, &st);
+	CHECK(st.state == TR_PLAYER_PAUSED && st.track == 5);
+	cmd(p, TR_CMD_NEXT, 0);
+	sleep_ms(50);
+	tr_player_status(p, &st);
+	CHECK(st.state == TR_PLAYER_PAUSED && st.track == 5);
+	cmd(p, TR_CMD_PLAY_TRACK, 3);
+	cmd(p, TR_CMD_RELEASE, 0);
+	cmd(p, TR_CMD_PREV, 0);
+	sleep_ms(50);
+	tr_player_status(p, &st);
+	CHECK(st.state == TR_PLAYER_PAUSED && st.track == 3);
+
+	/* A rescan keeps the playing track's place when the folders around it change. */
+	add_tone(dir, "a_first", "y.wav");
+	cmd(p, TR_CMD_RESCAN, 0);
+	sleep_ms(100);
+	tr_player_status(p, &st);
+	tr_player_library(p, &lib);
+	CHECK(lib.n == 9 && st.track == 4 && st.state == TR_PLAYER_PAUSED);
+
+	tr_player_free(p);
+	snprintf(clean, sizeof(clean), "rm -rf %s", dir);
+	if (system(clean) != 0)
+		exit(EXIT_FAILURE);
+}
+
 int main(void)
 {
 	test_over_full_scale();
+	test_folders();
 
 	char dir[] = "/tmp/test-player-XXXXXX", path[128];
 	if (!mkdtemp(dir))
@@ -136,12 +227,12 @@ int main(void)
 	CHECK(p != NULL);
 	CHECK(wait_for(p, found_tracks, &st));
 
-	/* Sorted by full path, without the text file. */
+	/* The music folder's own tracks, then each folder's, without the text file. */
 	tr_player_library(p, &lib);
 	CHECK(lib.n == 3);
-	CHECK(strcmp(lib.names[0], "first") == 0);
-	CHECK(strcmp(lib.names[1], "B second") == 0);
-	CHECK(strcmp(lib.names[2], "C broken") == 0);
+	CHECK(strcmp(lib.names[0], "B second") == 0);
+	CHECK(strcmp(lib.names[1], "C broken") == 0);
+	CHECK(strcmp(lib.names[2], "first") == 0);
 	const unsigned version = lib.version;
 	tr_player_library(p, &lib);
 	CHECK(lib.version == version);
@@ -152,8 +243,8 @@ int main(void)
 	tr_player_status(p, &st);
 	CHECK(st.state == TR_PLAYER_STOPPED);
 
-	/* Play the MP3. The null device takes audio as fast as we decode it, so it soon runs out and
-	 * moves on: past the WAV, skipping the broken file, and stops at the end. */
+	/* Play the WAV. The null device takes audio as fast as we decode it, so it soon runs out and
+	 * moves on to the broken file, and stops, because the next track is in a folder. */
 	cmd(p, TR_CMD_PLAY_TRACK, 0);
 	sleep_ms(50);
 	CHECK(wait_for(p, stopped, &st));
@@ -180,14 +271,14 @@ int main(void)
 	CHECK(st.state == TR_PLAYER_STOPPED);
 
 	/* Release beats a play sent just before it, and toggling resumes from the same place. */
-	cmd(p, TR_CMD_PLAY_TRACK, 1);
+	cmd(p, TR_CMD_PLAY_TRACK, 0);
 	cmd(p, TR_CMD_RELEASE, 0);
 	CHECK(wait_for(p, paused, &st));
 	const double held = st.position;
 	sleep_ms(50);
 	tr_player_status(p, &st);
 	CHECK(st.position == held);
-	CHECK(st.track == 1);
+	CHECK(st.track == 0);
 	CHECK(strcmp(st.title, "B second") == 0);
 	CHECK(st.duration > 2.9 && st.duration < 3.1);
 
@@ -211,7 +302,7 @@ int main(void)
 	CHECK(lib.n == 4);
 	CHECK(lib.version != version);
 	CHECK(strcmp(lib.names[0], "A new") == 0);
-	CHECK(strcmp(lib.names[1], "first") == 0);
+	CHECK(strcmp(lib.names[1], "B second") == 0);
 
 	tr_player_free(p);
 	char clean[160];

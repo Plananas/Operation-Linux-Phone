@@ -145,8 +145,8 @@ _SIGNATURES = {
     "tr_music_library_size": (c_size_t, []),
     "tr_music_init":        (None, [_vp]),
     "tr_music_status_init": (None, [_vp, c_char_p]),
-    "tr_music_touch":       (MusicCmd, [_vp, _vp, _vp, _i, _i, _i]),
-    "tr_music_follow":      (None, [_vp, _vp, _vp]),
+    "tr_music_touch":       (MusicCmd, [_vp, _vp, _vp, _vp, _i, _i, _i]),
+    "tr_music_follow":      (None, [_vp, _vp, _vp, _vp]),
     "tr_music_frame_key":   (c_uint64, [_vp, _vp, c_double]),
     "tr_music_render":      (None, [_vp, _vp, _vp, _vp, _vp, Surface]),
     "tr_music_showing_viz": (_i, [_vp]),
@@ -546,14 +546,14 @@ def music_theme(tables, accent, error, tiles, cw, ch, shades):
     return MusicTheme(fonts, colour(accent), colour(error), atlas(tiles, cw, ch), shades)
 
 
-def music_touch(state, status, event, x, y):
+def music_touch(state, status, library, event, x, y):
     """Apply a touch in app-area coordinates. Returns a command for the player."""
-    return _lib.tr_music_touch(state, state, status, TOUCH_EVENTS[event], x, y)
+    return _lib.tr_music_touch(state, state, status, library, TOUCH_EVENTS[event], x, y)
 
 
-def music_frame_key(state, status, now):
-    """Keeps the playing track in view, and changes whenever the screen needs redrawing."""
-    _lib.tr_music_follow(state, state, status)
+def music_frame_key(state, status, library, now):
+    """Keeps the playing track and open folder in view, and changes whenever the screen needs redrawing."""
+    _lib.tr_music_follow(state, state, status, library)
     return _lib.tr_music_frame_key(state, status, now)
 
 

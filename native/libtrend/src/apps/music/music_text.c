@@ -46,6 +46,13 @@ void tr_music_latin1(const char *utf8, char *out, size_t cap)
 	out[n] = '\0';
 }
 
+static void spaces_for_underscores(char *s)
+{
+	for (; *s; s++)
+		if (*s == '_')
+			*s = ' ';
+}
+
 void tr_music_display_name(const char *path, char *out, size_t cap)
 {
 	const char *slash = strrchr(path, '/');
@@ -53,7 +60,11 @@ void tr_music_display_name(const char *path, char *out, size_t cap)
 	char *dot = strrchr(out, '.');
 	if (dot && dot != out)
 		*dot = '\0';
-	for (char *c = out; *c; c++)
-		if (*c == '_')
-			*c = ' ';
+	spaces_for_underscores(out);
+}
+
+void tr_music_folder_name(const char *folder, char *out, size_t cap)
+{
+	tr_music_latin1(folder, out, cap);
+	spaces_for_underscores(out);
 }

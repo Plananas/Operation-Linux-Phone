@@ -20,7 +20,8 @@ typedef struct tr_music tr_music;
 typedef struct tr_music_viz tr_music_viz;
 
 enum {
-	TR_MUSIC_MAX_TRACKS = 512,
+	TR_MUSIC_MAX_TRACKS = 1024,
+	TR_MUSIC_MAX_FOLDERS = 256,
 	TR_MUSIC_NAME = 72,            /* Latin-1, ready to draw */
 	TR_MUSIC_SCOPE = 216,          /* samples in the visualiser */
 	TR_MUSIC_VOLUME_MAX = 15,
@@ -42,12 +43,32 @@ typedef struct {
 	int16_t scope[TR_MUSIC_SCOPE];
 } tr_music_status;
 
-/* The tracks found, as display names. version changes whenever the list does. */
+/* A folder of music, which is also a playlist: a run of the library's tracks. */
+typedef struct {
+	int first, n;
+	char name[TR_MUSIC_NAME];      /* relative to the music folder, like "Some Band/First Album" */
+} tr_music_folder;
+
+/* The tracks found, as display names. Each folder's tracks are together, in folder order. folders[0]
+ * is the music folder itself, with name "" and perhaps no tracks; the rest all have tracks. Before the
+ * first scan, n_folders is 0. version changes whenever the list does. */
 typedef struct {
 	unsigned version;
-	int n;
+	int n, n_folders;
+	tr_music_folder folders[TR_MUSIC_MAX_FOLDERS];
 	char names[TR_MUSIC_MAX_TRACKS][TR_MUSIC_NAME];
 } tr_music_library;
+
+/* The folder holding a track, or -1 if there's no such track. */
+static inline int tr_music_folder_of(const tr_music_library *library, int track)
+{
+	for (int i = 0; i < library->n_folders; i++) {
+		const tr_music_folder *f = &library->folders[i];
+		if (track >= f->first && track < f->first + f->n)
+			return i;
+	}
+	return -1;
+}
 
 typedef enum {
 	TR_CMD_NONE,
@@ -84,11 +105,12 @@ void tr_music_status_init(tr_music_status *out, const char *error);
 
 /* A touch in app-area coordinates (y = 0 is the top of the app area). event is TR_MUSIC_DOWN etc. */
 enum { TR_MUSIC_DOWN, TR_MUSIC_MOVE, TR_MUSIC_UP };
-tr_music_cmd tr_music_touch(const tr_music *in, tr_music *out, const tr_music_status *status, int event, int x, int y);
+tr_music_cmd tr_music_touch(const tr_music *in, tr_music *out, const tr_music_status *status,
+			    const tr_music_library *library, int event, int x, int y);
 
-
-/* Keep the playing track in view when it changes by itself. */
-void tr_music_follow(const tr_music *in, tr_music *out, const tr_music_status *status);
+/* Keep the playing track in view when it changes by itself, and the open folder when the library
+ * does. If that folder has gone, go back to the top level. */
+void tr_music_follow(const tr_music *in, tr_music *out, const tr_music_status *status, const tr_music_library *library);
 
 /* Changes whenever the screen needs redrawing; stable unless music is playing. */
 uint64_t tr_music_frame_key(const tr_music *s, const tr_music_status *status, double now);
@@ -114,5 +136,8 @@ void tr_music_latin1(const char *utf8, char *out, size_t cap);
 
 /* "/data/music/Some_Band/01_song.mp3" becomes "01 song". */
 void tr_music_display_name(const char *path, char *out, size_t cap);
+
+/* "Some_Band/First_Album" becomes "Some Band/First Album". */
+void tr_music_folder_name(const char *folder, char *out, size_t cap);
 
 #endif

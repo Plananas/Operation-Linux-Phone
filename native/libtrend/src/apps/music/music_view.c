@@ -197,51 +197,91 @@ static void draw_empty_list(tr_surface dst, const tr_music_theme *t)
 		"Copy files to /data/music over USB:",
 		"scp song.mp3 root@192.168.42.129:/data/music/",
 		"",
-		"Then reopen this app.",
+		"Then reopen this app. Each folder",
+		"of music shows up as a playlist.",
 		"MP3, FLAC, Ogg, Opus and WAV all play.",
 	};
 	for (int i = 0; i < (int)(sizeof(LINES) / sizeof(LINES[0])); i++)
 		put_text(dst, t->font17, LINES[i], ROWS_X0 + 10, ROWS_Y0 + 14 + i * 26, i == 0 ? TEXT : MID);
 }
 
+static void draw_folder_row(tr_surface clip, const tr_music_theme *t, const tr_music_folder *f, int y, int current)
+{
+	enum { ICON_X = ROWS_X0 + 12, ICON_W = 24, ICON_H = 16, TAB_W = 10, TAB_H = 3, NAME_X = ICON_X + ICON_W + 10 };
+	const tr_colour ink = current ? t->accent : MID;
+	const int icon_y = y + (ROW_H - ICON_H) / 2;
+	tr_fill_rect(clip, (tr_rect){ icon_y - TAB_H, icon_y, ICON_X, ICON_X + TAB_W }, ink);
+	tr_fill_rect(clip, (tr_rect){ icon_y, icon_y + ICON_H, ICON_X, ICON_X + ICON_W }, ink);
+
+	char count[16];
+	snprintf(count, sizeof(count), "%d", f->n);
+	const int count_w = (int)width_of(t->font17, count);
+	const int count_x = ROWS_X1 - 16 - count_w;
+	put_text(clip, t->font17, count, count_x, y + 12, DIM);
+	music_put_fitted(clip, t->font22, f->name, NAME_X, y + 9, count_x - 10 - NAME_X, current ? t->accent : TEXT);
+}
+
 static void draw_rows(tr_surface dst, const tr_music *s, const tr_music_status *st, const tr_music_library *lib, const tr_music_theme *t)
 {
 	/* A surface limited to the list, so rows clip cleanly at its edges. */
-	const tr_surface clip = { dst.px + (size_t)ROWS_Y0 * (size_t)dst.stride, dst.stride, dst.w, ROWS_Y1 - ROWS_Y0 };
+	const int y0 = music_rows_y0(s);
+	const tr_surface clip = { dst.px + (size_t)y0 * (size_t)dst.stride, dst.stride, dst.w, ROWS_Y1 - y0 };
+	const music_rows rows = music_rows_of(s, lib);
+	const int current_row = music_row_of_track(s, lib, st->track);
 	const int first = s->scroll / ROW_H;
-	const int last = tr_min(lib->n - 1, (s->scroll + (ROWS_Y1 - ROWS_Y0)) / ROW_H);
+	const int last = tr_min(rows.n_folders + rows.n_tracks - 1, (s->scroll + (ROWS_Y1 - y0)) / ROW_H);
 	for (int i = first; i <= last; i++) {
 		const int y = i * ROW_H - s->scroll;
-		const int current = i == st->track;
+		const int current = i == current_row;
 		if (i == s->pressed_row || current)
 			tr_fill_rect(clip, (tr_rect){ y + 1, y + ROW_H - 1, ROWS_X0, ROWS_X1 }, i == s->pressed_row ? FRAME : ROW_LIT);
 		if (current)
 			tr_fill_rect(clip, (tr_rect){ y + 1, y + ROW_H - 1, ROWS_X0, ROWS_X0 + 4 }, t->accent);
-		music_put_fitted(clip, t->font22, lib->names[i], ROWS_X0 + 12, y + 9, ROWS_X1 - ROWS_X0 - 28, current ? t->accent : TEXT);
+		if (i < rows.n_folders)
+			draw_folder_row(clip, t, &lib->folders[i + 1], y, current);
+		else
+			music_put_fitted(clip, t->font22, lib->names[rows.first_track + i - rows.n_folders], ROWS_X0 + 12, y + 9,
+					 ROWS_X1 - ROWS_X0 - 28, current ? t->accent : TEXT);
 	}
 }
 
-static void draw_scrollbar(tr_surface dst, const tr_music *s, int n)
+/* The row above an open folder's tracks: its name, and a tap goes back. */
+static void draw_back_row(tr_surface dst, const tr_music *s, const tr_music_library *lib, const tr_music_theme *t)
 {
-	const int view = ROWS_Y1 - ROWS_Y0, total = n * ROW_H;
+	enum { ARROW_X = ROWS_X0 + 24, ARROW_H = 22, NAME_X = ARROW_X + 12, Y1 = ROWS_Y0 + ROW_H };
+	if (s->pressed_back)
+		tr_fill_rect(dst, (tr_rect){ ROWS_Y0 + 1, Y1 - 1, ROWS_X0, ROWS_X1 }, FRAME);
+	draw_triangle(dst, ARROW_X, ROWS_Y0 + ROW_H / 2, ARROW_H, -1, t->accent);
+	music_put_fitted(dst, t->font22, lib->folders[s->folder].name, NAME_X, ROWS_Y0 + 9, ROWS_X1 - 8 - NAME_X, t->accent);
+	tr_fill_rect(dst, (tr_rect){ Y1 - 1, Y1, ROWS_X0, ROWS_X1 }, FRAME);
+}
+
+static void draw_scrollbar(tr_surface dst, const tr_music *s, const tr_music_library *lib)
+{
+	const music_rows rows = music_rows_of(s, lib);
+	const int y0 = music_rows_y0(s);
+	const int view = ROWS_Y1 - y0, total = (rows.n_folders + rows.n_tracks) * ROW_H;
 	if (total <= view)
 		return;
 	const int h = tr_max(24, view * view / total);
-	const int y = ROWS_Y0 + (view - h) * s->scroll / (total - view);
+	const int y = y0 + (view - h) * s->scroll / (total - view);
 	tr_fill_rect(dst, (tr_rect){ y, y + h, ROWS_X1 - 3, ROWS_X1 }, DIM);
 }
 
 static void draw_list(tr_surface dst, const tr_music *s, const tr_music_status *st, const tr_music_library *lib, const tr_music_theme *t)
 {
 	char label[32];
-	snprintf(label, sizeof(label), " library: %d ", lib->n);
+	snprintf(label, sizeof(label), " %s: %d ", s->folder ? "playlist" : "library",
+		 s->folder ? lib->folders[s->folder].n : lib->n);
 	draw_card(dst, t, LIST_Y0, LIST_Y1, label);
 	if (lib->n == 0) {
 		draw_empty_list(dst, t);
 		return;
 	}
+	if (s->folder)
+		draw_back_row(dst, s, lib, t);
 	draw_rows(dst, s, st, lib, t);
-	draw_scrollbar(dst, s, lib->n);
+	draw_scrollbar(dst, s, lib);
 }
 
 void tr_music_render(const tr_music *s, const tr_music_status *status, const tr_music_library *library,

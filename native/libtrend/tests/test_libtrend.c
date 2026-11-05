@@ -509,6 +509,8 @@ static void test_music_text(void)
 	CHECK(strcmp(out, "no-extension") == 0);
 	tr_music_display_name(".hidden", out, sizeof(out));
 	CHECK(strcmp(out, ".hidden") == 0);
+	tr_music_folder_name("Some_Band/caf\xc3\xa9", out, sizeof(out));
+	CHECK(strcmp(out, "Some Band/caf\xe9") == 0);
 
 	tr_music_latin1("caf\xc3\xa9", out, sizeof(out));                 /* in Latin-1 */
 	CHECK(strcmp(out, "caf\xe9") == 0);
@@ -536,10 +538,33 @@ static tr_music_status music_status(int n_tracks)
 	return st;
 }
 
-static tr_music_cmd music_tap(tr_music *s, const tr_music_status *st, int x, int y)
+/* A library with n tracks and no folders. */
+static const tr_music_library *music_library(tr_music_library *out, int n)
 {
-	tr_music_touch(s, s, st, TR_MUSIC_DOWN, x, y);
-	return tr_music_touch(s, s, st, TR_MUSIC_UP, x, y);
+	memset(out, 0, sizeof(*out));
+	out->version = 1;
+	out->n = n;
+	out->n_folders = 1;
+	out->folders[0].n = n;
+	return out;
+}
+
+/* Then a folder of the next n tracks. */
+static int music_add_folder(tr_music_library *lib, const char *name, int n)
+{
+	tr_music_folder *f = &lib->folders[lib->n_folders];
+	f->first = lib->n;
+	f->n = n;
+	snprintf(f->name, sizeof(f->name), "%s", name);
+	lib->n += n;
+	lib->version++;
+	return lib->n_folders++;
+}
+
+static tr_music_cmd music_tap(tr_music *s, const tr_music_status *st, const tr_music_library *lib, int x, int y)
+{
+	tr_music_touch(s, s, st, lib, TR_MUSIC_DOWN, x, y);
+	return tr_music_touch(s, s, st, lib, TR_MUSIC_UP, x, y);
 }
 
 static void test_music_touch(void)
@@ -548,62 +573,174 @@ static void test_music_touch(void)
 	tr_music *s = malloc(tr_music_size());
 	tr_music_init(s);
 	tr_music_status st = music_status(20);
+	static tr_music_library lib_store, few_store;
+	const tr_music_library *lib = music_library(&lib_store, 20);
 	tr_music_cmd c;
 
-	CHECK(music_tap(s, &st, 90, KEY_Y).kind == TR_CMD_PREV);
-	CHECK(music_tap(s, &st, 240, KEY_Y).kind == TR_CMD_TOGGLE);
-	CHECK(music_tap(s, &st, 380, KEY_Y).kind == TR_CMD_NEXT);
-	CHECK(music_tap(s, &st, 168, KEY_Y).kind == TR_CMD_NONE);     /* the gap between keys */
-	CHECK(music_tap(s, &st, 5, 5).kind == TR_CMD_NONE);
+	CHECK(music_tap(s, &st, lib, 90, KEY_Y).kind == TR_CMD_PREV);
+	CHECK(music_tap(s, &st, lib, 240, KEY_Y).kind == TR_CMD_TOGGLE);
+	CHECK(music_tap(s, &st, lib, 380, KEY_Y).kind == TR_CMD_NEXT);
+	CHECK(music_tap(s, &st, lib, 168, KEY_Y).kind == TR_CMD_NONE);     /* the gap between keys */
+	CHECK(music_tap(s, &st, lib, 5, 5).kind == TR_CMD_NONE);
 
 	/* Sliding off a key cancels it. */
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 240, KEY_Y);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 240, 100);
-	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 240, 100).kind == TR_CMD_NONE);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 240, KEY_Y);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 240, 100);
+	CHECK(tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 240, 100).kind == TR_CMD_NONE);
 
 	/* A tap on a row plays it. */
-	c = music_tap(s, &st, 200, ROW0 + 2 * ROW_H);
+	c = music_tap(s, &st, lib, 200, ROW0 + 2 * ROW_H);
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
 
 	/* Past the end of a short list, nothing. */
 	const tr_music_status few = music_status(2);
-	CHECK(music_tap(s, &few, 200, ROW0 + 5 * ROW_H).kind == TR_CMD_NONE);
+	CHECK(music_tap(s, &few, music_library(&few_store, 2), 200, ROW0 + 5 * ROW_H).kind == TR_CMD_NONE);
 
 	/* A small wobble is still a tap. Dragging scrolls instead, and plays nothing. */
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0 + 100);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 104);
-	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 104).kind == TR_CMD_PLAY_TRACK);
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0 + 250);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 250 - 2 * ROW_H);
-	CHECK(tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 250 - 2 * ROW_H).kind == TR_CMD_NONE);
-	c = music_tap(s, &st, 200, ROW0);                               /* the list has moved 2 rows */
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, ROW0 + 100);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 200, ROW0 + 104);
+	CHECK(tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, ROW0 + 104).kind == TR_CMD_PLAY_TRACK);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, ROW0 + 250);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 200, ROW0 + 250 - 2 * ROW_H);
+	CHECK(tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, ROW0 + 250 - 2 * ROW_H).kind == TR_CMD_NONE);
+	c = music_tap(s, &st, lib, 200, ROW0);                               /* the list has moved 2 rows */
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
 
 	/* It can't scroll past either end. */
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 + 2000);
-	tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 + 2000);
-	c = music_tap(s, &st, 200, ROW0);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, ROW0);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 200, ROW0 + 2000);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, ROW0 + 2000);
+	c = music_tap(s, &st, lib, 200, ROW0);
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 0);
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 200, ROW0);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 200, ROW0 - 5000);
-	tr_music_touch(s, s, &st, TR_MUSIC_UP, 200, ROW0 - 5000);
-	c = music_tap(s, &st, 200, ROW0 + 6 * ROW_H);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, ROW0);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 200, ROW0 - 5000);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, ROW0 - 5000);
+	c = music_tap(s, &st, lib, 200, ROW0 + 6 * ROW_H);
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 19);
 
 	/* Seeking: only with a known length, dragged anywhere, clamped to the bar. */
-	CHECK(music_tap(s, &st, 240, BAR_Y).kind == TR_CMD_NONE);
+	CHECK(music_tap(s, &st, lib, 240, BAR_Y).kind == TR_CMD_NONE);
 	st.duration = 100.0;
-	c = music_tap(s, &st, 240, BAR_Y);
+	c = music_tap(s, &st, lib, 240, BAR_Y);
 	CHECK(c.kind == TR_CMD_SEEK && c.arg == 500);
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 240, BAR_Y);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, 9999, 700);
-	c = tr_music_touch(s, s, &st, TR_MUSIC_UP, 9999, 700);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 240, BAR_Y);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 9999, 700);
+	c = tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 9999, 700);
 	CHECK(c.kind == TR_CMD_SEEK && c.arg == 1000);
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 240, BAR_Y);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, -50, BAR_Y);
-	c = tr_music_touch(s, s, &st, TR_MUSIC_UP, -50, BAR_Y);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 240, BAR_Y);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, -50, BAR_Y);
+	c = tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, -50, BAR_Y);
 	CHECK(c.kind == TR_CMD_SEEK && c.arg == 0);
+	free(s);
+}
+
+static void test_music_folders(void)
+{
+	enum { ROW0 = 426, ROW_H = 44, BACK_Y = 426, KEY_Y = 336 };
+	static tr_music_library lib_store;
+	tr_music_library *lib = &lib_store;
+	music_library(lib, 2);                          /* two tracks not in a folder: 0 and 1 */
+	const int band = music_add_folder(lib, "Band", 3);        /* tracks 2, 3, 4 */
+	const int solo = music_add_folder(lib, "Solo", 20);       /* tracks 5 .. 24 */
+	tr_music_status st = music_status(lib->n);
+	tr_music *s = malloc(tr_music_size());
+	tr_music_init(s);
+	tr_music_follow(s, s, &st, lib);
+	tr_music_cmd c;
+
+	CHECK(tr_music_folder_of(lib, 1) == 0 && tr_music_folder_of(lib, 2) == band && tr_music_folder_of(lib, 24) == solo);
+	CHECK(tr_music_folder_of(lib, -1) == -1 && tr_music_folder_of(lib, 25) == -1);
+
+	/* The top level is the folders, then the tracks not in one. */
+	c = music_tap(s, &st, lib, 200, ROW0 + 2 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 0);
+	c = music_tap(s, &st, lib, 200, ROW0 + 3 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 1);
+	CHECK(music_tap(s, &st, lib, 200, ROW0 + 4 * ROW_H).kind == TR_CMD_NONE);
+
+	/* Opening a folder plays nothing, and its rows are its tracks, below the row that goes back. */
+	const uint64_t before = tr_music_frame_key(s, &st, 1.0);
+	CHECK(music_tap(s, &st, lib, 200, ROW0).kind == TR_CMD_NONE);
+	CHECK(tr_music_frame_key(s, &st, 1.0) != before);
+	CHECK(music_tap(s, &st, lib, 200, BACK_Y + ROW_H).kind == TR_CMD_PLAY_TRACK);
+	c = music_tap(s, &st, lib, 200, BACK_Y + 3 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 4);
+	CHECK(music_tap(s, &st, lib, 200, BACK_Y + 4 * ROW_H).kind == TR_CMD_NONE);
+
+	/* With nothing playing, the keys start this folder. Otherwise they go to the player. */
+	c = music_tap(s, &st, lib, 240, KEY_Y);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
+	c = music_tap(s, &st, lib, 380, KEY_Y);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
+	CHECK(music_tap(s, &st, lib, 90, KEY_Y).kind == TR_CMD_PREV);
+	st.state = TR_PLAYER_PLAYING;
+	CHECK(music_tap(s, &st, lib, 240, KEY_Y).kind == TR_CMD_TOGGLE);
+	CHECK(music_tap(s, &st, lib, 380, KEY_Y).kind == TR_CMD_NEXT);
+	st.state = TR_PLAYER_STOPPED;
+
+	/* Sliding off the back row cancels it. Tapping it goes back. */
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, BACK_Y);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 200, 300);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, 300);
+	c = music_tap(s, &st, lib, 200, BACK_Y + ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 2);
+	CHECK(music_tap(s, &st, lib, 200, BACK_Y).kind == TR_CMD_NONE);
+	c = music_tap(s, &st, lib, 200, ROW0 + 2 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 0);
+	CHECK(music_tap(s, &st, lib, 240, KEY_Y).kind == TR_CMD_TOGGLE);
+
+	/* A long folder scrolls under the back row, and can reach its last track. */
+	CHECK(music_tap(s, &st, lib, 200, ROW0 + ROW_H).kind == TR_CMD_NONE);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, ROW0 + 200);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, 200, ROW0 + 200 - 5000);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, ROW0 + 200 - 5000);
+	c = music_tap(s, &st, lib, 200, BACK_Y + 6 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 24);
+	CHECK(music_tap(s, &st, lib, 200, BACK_Y).kind == TR_CMD_NONE);        /* the back row didn't move */
+
+	/* The playing track is kept in view only if its folder is the one open. */
+	c = music_tap(s, &st, lib, 200, ROW0 + 2 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 0);       /* top level, as it was */
+	CHECK(music_tap(s, &st, lib, 200, ROW0 + ROW_H).kind == TR_CMD_NONE);
+	st.track = 24;
+	tr_music_follow(s, s, &st, lib);
+	c = music_tap(s, &st, lib, 200, BACK_Y + 6 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 24);
+	music_tap(s, &st, lib, 200, BACK_Y);
+	st.track = 2;
+	tr_music_follow(s, s, &st, lib);
+	c = music_tap(s, &st, lib, 200, ROW0 + 2 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 0);
+
+	/* Opening a folder shows the track playing in it. */
+	st.track = 24;
+	tr_music_follow(s, s, &st, lib);
+	music_tap(s, &st, lib, 200, ROW0 + ROW_H);
+	c = music_tap(s, &st, lib, 200, BACK_Y + 6 * ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 24);
+	music_tap(s, &st, lib, 200, BACK_Y);
+	st.track = -1;
+	tr_music_follow(s, s, &st, lib);
+
+	/* A rescan can renumber the open folder, or remove it. */
+	music_tap(s, &st, lib, 200, ROW0 + ROW_H);              /* Solo */
+	static tr_music_library moved_store;
+	tr_music_library *moved = &moved_store;
+	music_library(moved, 0);
+	music_add_folder(moved, "Another", 4);
+	music_add_folder(moved, "Band", 3);
+	music_add_folder(moved, "Solo", 2);                     /* tracks 7, 8 */
+	const unsigned key_before = (unsigned)tr_music_frame_key(s, &st, 1.0);
+	tr_music_follow(s, s, &st, moved);
+	CHECK((unsigned)tr_music_frame_key(s, &st, 1.0) != key_before);
+	c = music_tap(s, &st, moved, 200, BACK_Y + ROW_H);
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 7);
+	music_library(moved, 1);
+	music_add_folder(moved, "Band", 3);
+	moved->version += 5;
+	tr_music_follow(s, s, &st, moved);
+	c = music_tap(s, &st, moved, 200, ROW0 + ROW_H);        /* top level again: Band, then the track */
+	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 0);
 	free(s);
 }
 
@@ -612,11 +749,13 @@ static void test_music_follow_and_key(void)
 	tr_music *s = malloc(tr_music_size());
 	tr_music_init(s);
 	tr_music_status st = music_status(20);
+	static tr_music_library lib_store;
+	const tr_music_library *lib = music_library(&lib_store, 20);
 
 	/* The track moving off screen brings it back. */
 	st.track = 15;
-	tr_music_follow(s, s, &st);
-	tr_music_cmd c = music_tap(s, &st, 200, 412 + 6 * 44 + 2);
+	tr_music_follow(s, s, &st, lib);
+	tr_music_cmd c = music_tap(s, &st, lib, 200, 412 + 6 * 44 + 2);
 	CHECK(c.kind == TR_CMD_PLAY_TRACK && c.arg == 15);
 
 	/* Stable while not playing, whatever the time. */
@@ -642,19 +781,20 @@ static void test_music_render(void)
 	const tr_music_theme theme = { font, font, font, font, RED, BLUE, { NULL, 0, 0 }, 0 };
 	enum { W = 480, H = 734 };
 	static uint32_t px[H * W];
-	static tr_music_library lib;
+	static tr_music_library lib_store;
+	tr_music_library *lib = &lib_store;
 	const tr_surface dst = { (uint8_t *)px, W * 4, W, H };
 	tr_music *s = malloc(tr_music_size());
 	tr_music_init(s);
 
 	/* Empty, then full of the longest names, with every track in turn playing. */
 	tr_music_status st = music_status(0);
-	tr_music_render(s, &st, &lib, NULL, &theme, dst);
-	lib.n = TR_MUSIC_MAX_TRACKS;
-	st.n_tracks = lib.n;
-	for (int i = 0; i < lib.n; i++) {
-		memset(lib.names[i], 'x', TR_MUSIC_NAME - 1);
-		lib.names[i][TR_MUSIC_NAME - 1] = '\0';
+	tr_music_render(s, &st, lib, NULL, &theme, dst);
+	music_library(lib, TR_MUSIC_MAX_TRACKS);
+	st.n_tracks = lib->n;
+	for (int i = 0; i < lib->n; i++) {
+		memset(lib->names[i], 'x', TR_MUSIC_NAME - 1);
+		lib->names[i][TR_MUSIC_NAME - 1] = '\0';
 	}
 	memset(st.title, 'y', TR_MUSIC_NAME - 1);
 	memset(st.error, 'z', TR_MUSIC_NAME - 1);
@@ -662,23 +802,44 @@ static void test_music_render(void)
 	st.duration = 100000.0;
 	for (int i = 0; i < TR_MUSIC_SCOPE; i++)
 		st.scope[i] = i % 2 ? 32767 : -32768;           /* full scale stays inside the scope */
-	for (st.track = 0; st.track < lib.n; st.track += 37) {
+	for (st.track = 0; st.track < lib->n; st.track += 37) {
 		st.position = st.track * 300.0;                 /* past the end, too */
-		tr_music_follow(s, s, &st);
-		tr_music_render(s, &st, &lib, NULL, &theme, dst);
+		tr_music_follow(s, s, &st, lib);
+		tr_music_render(s, &st, lib, NULL, &theme, dst);
 	}
 
 	/* The key being held and the playing track both show. */
 	st.track = 0;
-	tr_music_follow(s, s, &st);
-	tr_music_render(s, &st, &lib, NULL, &theme, dst);
+	tr_music_follow(s, s, &st, lib);
+	tr_music_render(s, &st, lib, NULL, &theme, dst);
 	const uint32_t idle_key = at(dst, 40, 306);
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, 40, 306);
-	tr_music_render(s, &st, &lib, NULL, &theme, dst);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 40, 306);
+	tr_music_render(s, &st, lib, NULL, &theme, dst);
 	CHECK(at(dst, 40, 306) != idle_key);
-	tr_music_touch(s, s, &st, TR_MUSIC_UP, 40, 600);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 40, 600);
 	CHECK(at(dst, 20, 426) == RED);                         /* the marker on the current row */
 	CHECK(at(dst, 0, 0) == 0xff000000u);
+
+	/* The most folders, long names; then inside one, with its track playing and the back row held. */
+	music_library(lib, 0);
+	const int each = TR_MUSIC_MAX_TRACKS / (TR_MUSIC_MAX_FOLDERS - 1);
+	char long_name[TR_MUSIC_NAME];
+	memset(long_name, 'n', sizeof(long_name) - 1);
+	long_name[sizeof(long_name) - 1] = '\0';
+	while (lib->n_folders < TR_MUSIC_MAX_FOLDERS)
+		music_add_folder(lib, long_name, each);
+	st.n_tracks = lib->n;
+	st.track = lib->n - 1;
+	tr_music_follow(s, s, &st, lib);
+	tr_music_render(s, &st, lib, NULL, &theme, dst);
+	CHECK(at(dst, 20, 426) != RED);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, 426 + 6 * 44 + 2);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, 426 + 6 * 44 + 2);
+	tr_music_render(s, &st, lib, NULL, &theme, dst);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, 200, 426);
+	tr_music_render(s, &st, lib, NULL, &theme, dst);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, 200, 426);
+	tr_music_render(s, &st, lib, NULL, &theme, dst);
 	free(s);
 }
 
@@ -698,10 +859,11 @@ static void test_music_viz(void)
 				tiles[t][y][x] = 0xff000000u | (uint32_t)(t / SHADES + 1);
 	const tr_music_theme theme = { font, font, font, font, RED, BLUE, { (const uint8_t *)tiles, CH, CW }, SHADES };
 	static uint32_t px[H * W], before[H * W];
-	static tr_music_library lib;
 	const tr_surface dst = { (uint8_t *)px, W * 4, W, H };
 	tr_music *s = malloc(tr_music_size());
 	tr_music_viz *v = malloc(tr_music_viz_size());
+	static tr_music_library lib_store;
+	const tr_music_library *lib = music_library(&lib_store, 20);
 	tr_music_init(s);
 	tr_music_viz_init(v);
 	tr_music_status st = music_status(3);
@@ -709,28 +871,28 @@ static void test_music_viz(void)
 
 	/* The tabs switch, and ask nothing of the player. Sliding off one cancels it. */
 	CHECK(!tr_music_showing_viz(s));
-	CHECK(music_tap(s, &st, VIZ_X, TAB_Y).kind == TR_CMD_NONE);
+	CHECK(music_tap(s, &st, lib, VIZ_X, TAB_Y).kind == TR_CMD_NONE);
 	CHECK(tr_music_showing_viz(s));
-	CHECK(music_tap(s, &st, VIZ_X, TAB_Y).kind == TR_CMD_NONE);    /* already there */
+	CHECK(music_tap(s, &st, lib, VIZ_X, TAB_Y).kind == TR_CMD_NONE);    /* already there */
 	CHECK(tr_music_showing_viz(s));
-	tr_music_touch(s, s, &st, TR_MUSIC_DOWN, SONG_X, TAB_Y);
-	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, SONG_X, 400);
-	tr_music_touch(s, s, &st, TR_MUSIC_UP, SONG_X, 400);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_DOWN, SONG_X, TAB_Y);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_MOVE, SONG_X, 400);
+	tr_music_touch(s, s, &st, lib, TR_MUSIC_UP, SONG_X, 400);
 	CHECK(tr_music_showing_viz(s));
 
 	/* The controls still work on the visualiser tab, in their own places. The list isn't there. */
-	CHECK(music_tap(s, &st, 240, 680).kind == TR_CMD_TOGGLE);
-	CHECK(music_tap(s, &st, 90, 680).kind == TR_CMD_PREV);
-	CHECK(music_tap(s, &st, 380, 680).kind == TR_CMD_NEXT);
-	tr_music_cmd c = music_tap(s, &st, 240, 593);
+	CHECK(music_tap(s, &st, lib, 240, 680).kind == TR_CMD_TOGGLE);
+	CHECK(music_tap(s, &st, lib, 90, 680).kind == TR_CMD_PREV);
+	CHECK(music_tap(s, &st, lib, 380, 680).kind == TR_CMD_NEXT);
+	tr_music_cmd c = music_tap(s, &st, lib, 240, 593);
 	CHECK(c.kind == TR_CMD_SEEK && c.arg == 500);
-	CHECK(music_tap(s, &st, 240, 300).kind == TR_CMD_NONE);        /* the picture */
+	CHECK(music_tap(s, &st, lib, 240, 300).kind == TR_CMD_NONE);        /* the picture */
 
 	/* Back to the song tab: the same places do what they do there. */
-	music_tap(s, &st, SONG_X, TAB_Y);
+	music_tap(s, &st, lib, SONG_X, TAB_Y);
 	CHECK(!tr_music_showing_viz(s));
-	CHECK(music_tap(s, &st, 240, 336).kind == TR_CMD_TOGGLE);
-	music_tap(s, &st, VIZ_X, TAB_Y);
+	CHECK(music_tap(s, &st, lib, 240, 336).kind == TR_CMD_TOGGLE);
+	music_tap(s, &st, lib, VIZ_X, TAB_Y);
 
 	/* Loud music, at extremes that must stay in bounds, shows the whole palette. */
 	st.state = TR_PLAYER_PLAYING;
@@ -740,7 +902,7 @@ static void test_music_viz(void)
 			st.scope[i] = i % 54 < 27 ? 32767 : -32768;
 		now += 1.0 / 30.0;
 		tr_music_viz_advance(v, &st, now);
-		tr_music_render(s, &st, &lib, v, &theme, dst);
+		tr_music_render(s, &st, lib, v, &theme, dst);
 	}
 	/* All the colours of the rainbow are in the picture, and white on top of the bars. */
 	int seen[COLOURS + 1] = { 0 };
@@ -765,7 +927,7 @@ static void test_music_viz(void)
 		now += 1.0 / 30.0;
 		tr_music_viz_advance(v, &st, now);
 	}
-	tr_music_render(s, &st, &lib, v, &theme, dst);
+	tr_music_render(s, &st, lib, v, &theme, dst);
 	CHECK(memcmp(before + PICTURE_Y0 * W, px + PICTURE_Y0 * W, (size_t)(PICTURE_Y1 - PICTURE_Y0) * W * 4) == 0);
 
 	/* Playing, it moves on, and the screen key asks for that. */
@@ -773,7 +935,7 @@ static void test_music_viz(void)
 	CHECK(tr_music_frame_key(s, &st, 1.0) != tr_music_frame_key(s, &st, 1.04));
 	now += 1.0 / 30.0;
 	tr_music_viz_advance(v, &st, now);
-	tr_music_render(s, &st, &lib, v, &theme, dst);
+	tr_music_render(s, &st, lib, v, &theme, dst);
 	CHECK(memcmp(before + PICTURE_Y0 * W, px + PICTURE_Y0 * W, (size_t)(PICTURE_Y1 - PICTURE_Y0) * W * 4) != 0);
 
 	/* After a long silence the levels are down, and a surface of any size is safe. */
@@ -1329,6 +1491,7 @@ int main(void)
 	test_calc_render();
 	test_music_text();
 	test_music_touch();
+	test_music_folders();
 	test_music_follow_and_key();
 	test_music_render();
 	test_music_viz();

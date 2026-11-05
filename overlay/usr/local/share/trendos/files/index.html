@@ -62,12 +62,15 @@ li.row:first-child { border-top: 0; }
   <section class="card">
     <nav id="crumbs" aria-label="Folder"></nav>
     <div id="drop">
-      <span id="drop-text">Drop files here</span>
+      <span id="drop-text">Drop files or folders here</span>
       <div class="tools" style="justify-content:center">
         <label class="btn" for="pick" tabindex="0">Choose files</label>
         <input id="pick" type="file" multiple hidden>
+        <label class="btn" for="pick-dir" tabindex="0" id="pick-dir-label">Choose folder</label>
+        <input id="pick-dir" type="file" webkitdirectory hidden>
         <button id="mkdir" type="button">New folder</button>
       </div>
+      <p class="muted" id="hint" hidden>Each folder here is a playlist in Music.</p>
     </div>
     <div id="uploads"></div>
     <p class="err" id="err" role="alert"></p>
@@ -126,6 +129,7 @@ function crumbs() {
   path.forEach((name, i) => add(name, path.slice(0, i + 1)));
   const top = path.length === 0;
   $("drop").style.display = top ? "none" : "";
+  $("hint").hidden = !(path.length === 1 && path[0] === "music");
 }
 
 function draw() {
@@ -161,18 +165,32 @@ async function go(to) {
   draw();
 }
 
+// The server only removes empty folders, so empty them first. Returns the failed response, if any.
+async function removeTree(e, here) {
+  if (e.dir) {
+    const res = await call("GET", "api/list/" + enc(here));
+    if (!res.ok) return res;
+    for (const inside of (await res.json()).entries) {
+      const bad = await removeTree(inside, [...here, inside.name]);
+      if (bad) return bad;
+    }
+  }
+  const res = await call("DELETE", "api/file/" + enc(here));
+  return res.ok ? null : res;
+}
+
 async function remove(e, here) {
-  if (!confirm("Delete " + e.name + "?")) return;
-  const res = await call("DELETE", "api/file/" + enc(here)).catch(() => null);
-  if (!res) { $("err").textContent = "Can't reach the phone."; return; }
-  if (!res.ok) { $("err").textContent = await failure(res); return; }
+  if (!confirm(e.dir ? "Delete the folder " + e.name + " and everything in it?" : "Delete " + e.name + "?")) return;
+  const bad = await removeTree(e, here).then(r => r || "ok", () => null);
+  if (!bad) { $("err").textContent = "Can't reach the phone."; go(path); return; }
+  if (bad !== "ok") { const msg = await failure(bad); await go(path); $("err").textContent = msg; return; }
   go(path);
 }
 
-function uploadOne(file, row, bar) {
+function uploadOne(file, parts, row, bar) {
   return new Promise(done => {
     const x = new XMLHttpRequest();
-    x.open("PUT", "api/file/" + enc([...path, file.name]));
+    x.open("PUT", "api/file/" + enc(parts));
     x.setRequestHeader("X-Trend", "1");
     x.upload.onprogress = ev => { if (ev.total) bar.style.width = (100 * ev.loaded / ev.total) + "%"; };
     const fail = msg => { row.lastChild.remove(); row.append(element("div", { className: "err", textContent: msg })); done(false); };
@@ -186,19 +204,80 @@ function uploadOne(file, row, bar) {
   });
 }
 
+// Make each folder on the way down to a file, once. One that's there already is fine, and any other
+// problem shows up when the file itself is sent.
+async function makeFolders(parts, from, made) {
+  for (let i = from + 1; i < parts.length; i++) {
+    const url = "api/dir/" + enc(parts.slice(0, i));
+    if (made.has(url)) continue;
+    made.add(url);
+    await call("POST", url).catch(() => null);
+  }
+}
+
 let chain = Promise.resolve();  // one at a time: the phone's Wi-Fi and disk are slow
-function upload(files) {
-  for (const file of files) {
-    const replacing = entries.some(e => e.name === file.name);
-    if (replacing && !confirm("Replace " + file.name + "?")) continue;
-    if (file.size > free) { $("err").textContent = file.name + " won't fit on the phone."; continue; }
+
+// Send items of { file, parts }, where parts is its path below the folder showing now. They go to that
+// folder even if another is open by the time their turn comes.
+function upload(items) {
+  const base = path, known = entries, made = new Set(), asked = new Map();
+  const wanted = item => {
+    const first = item.parts[0];
+    if (item.parts.length === 1)
+      return !known.some(e => e.name === first) || confirm("Replace " + first + "?");
+    if (!asked.has(first))
+      asked.set(first, !known.some(e => e.name === first) ||
+        confirm("Add to the existing folder " + first + "? Files with the same names get replaced."));
+    return asked.get(first);
+  };
+  let room = free;
+  for (const item of items) {
+    const label = item.parts.join("/");
+    if (item.parts.some(part => part.startsWith("."))) continue;   // .DS_Store and such; the server refuses them
+    if (!wanted(item)) continue;
+    if (item.file.size > room) { $("err").textContent = label + " won't fit on the phone."; continue; }
+    room -= item.file.size;
     const bar = element("i");
     const row = element("div", { className: "up" },
-      element("div", { className: "name", textContent: file.name + "  (" + size(file.size) + ")" }),
+      element("div", { className: "name", textContent: label + "  (" + size(item.file.size) + ")" }),
       element("div", { className: "bar" }, bar));
     $("uploads").append(row);
-    chain = chain.then(() => uploadOne(file, row, bar)).then(() => go(path));
+    const parts = [...base, ...item.parts];
+    chain = chain.then(() => makeFolders(parts, base.length, made))
+      .then(() => uploadOne(item.file, parts, row, bar)).then(() => go(path));
   }
+}
+
+const loose = files => [...files].map(file => ({ file, parts: [file.name] }));
+const picked = files => [...files].map(file => ({ file, parts: file.webkitRelativePath.split("/") }));
+
+// Everything inside a dropped file or folder, as upload items.
+async function walkDropped(entry, above, out) {
+  const parts = [...above, entry.name];
+  if (entry.isFile) {
+    out.push({ file: await new Promise((ok, no) => entry.file(ok, no)), parts });
+    return;
+  }
+  const reader = entry.createReader();
+  for (;;) {                    // each read gives only some of them, until one comes back empty
+    const batch = await new Promise((ok, no) => reader.readEntries(ok, no));
+    if (!batch.length) return;
+    for (const inside of batch) await walkDropped(inside, parts, out);
+  }
+}
+
+async function dropped(transfer) {
+  // The browser empties the drop as soon as this event is over, so take the entries first.
+  const roots = [...transfer.items].map(item => item.webkitGetAsEntry && item.webkitGetAsEntry()).filter(Boolean);
+  if (!roots.length) { upload(loose(transfer.files)); return; }
+  const items = [];
+  try {
+    for (const root of roots) await walkDropped(root, [], items);
+  } catch {
+    $("err").textContent = "Couldn't read what was dropped.";
+    return;
+  }
+  upload(items);
 }
 
 $("login-form").onsubmit = async ev => {
@@ -212,8 +291,11 @@ $("login-form").onsubmit = async ev => {
   $("pin").focus();
 };
 
-$("pick").onchange = ev => { upload(ev.target.files); ev.target.value = ""; };
-document.querySelector("label[for=pick]").onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); $("pick").click(); } };
+$("pick").onchange = ev => { upload(loose(ev.target.files)); ev.target.value = ""; };
+$("pick-dir").onchange = ev => { upload(picked(ev.target.files)); ev.target.value = ""; };
+if (!("webkitdirectory" in $("pick-dir"))) $("pick-dir-label").hidden = true;   // most phones can't
+for (const id of ["pick", "pick-dir"])
+  document.querySelector("label[for=" + id + "]").onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); $(id).click(); } };
 
 $("mkdir").onclick = async () => {
   const name = prompt("Name of the new folder");
@@ -221,14 +303,14 @@ $("mkdir").onclick = async () => {
   const res = await call("POST", "api/dir/" + enc([...path, name])).catch(() => null);
   if (!res) { $("err").textContent = "Can't reach the phone."; return; }
   if (!res.ok) { $("err").textContent = await failure(res); return; }
-  go(path);
+  go([...path, name]);          // what comes next is putting something in it
 };
 
 const drop = $("drop");
 const quiet = ev => { ev.preventDefault(); ev.stopPropagation(); };
 ["dragenter", "dragover"].forEach(t => drop.addEventListener(t, ev => { quiet(ev); drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach(t => drop.addEventListener(t, ev => { quiet(ev); drop.classList.remove("over"); }));
-drop.addEventListener("drop", ev => upload(ev.dataTransfer.files));
+drop.addEventListener("drop", ev => dropped(ev.dataTransfer));
 ["dragover", "drop"].forEach(t => window.addEventListener(t, ev => ev.preventDefault()));
 
 go([]);
