@@ -52,7 +52,7 @@ To change model, set `WEB_MODEL` in `overlay/usr/local/lib/trendos/tos/config.py
 | Problem | Fix |
 |---|---|
 | Screen frozen | `ssh root@192.168.42.129 rc-service bootscreen restart` |
-| Won't boot TREND OS | Pull the battery, hold **Vol-Down + Home + Power** for Download mode, then `heimdall flash --KERNEL firmware/trendos/boot-native8.img` (or `boot-native6.img` for Samsung's kernel) |
+| Won't boot TREND OS | Pull the battery, hold **Vol-Down + Home + Power** for Download mode, then `heimdall flash --KERNEL firmware/trendos/boot-native9.img` (or `boot-native6.img` for Samsung's kernel) |
 | Want Android back | Same Download mode, then `heimdall flash --KERNEL firmware/stock/boot.img` (or `firmware/android-rooted/boot-root4.img` for rooted) |
 | No logo and no Download mode | Battery out and back in, then hold **Vol-Up** while plugging in USB. The laptop sees a Spreadtrum device, but recovery from there isn't set up yet |
 
