@@ -37,6 +37,11 @@ void gemini_add_model(sb *contents, const gemini_reply *r);
 void gemini_add_result(sb *results, const gemini_call *call, const char *text, size_t n, int ok);
 void gemini_add_results(sb *contents, const sb *results);
 
+/* Forget the oldest turns so that contents holds at most max bytes and starts has room for one more turn. starts
+ * holds where each of the n turns begins, as contents' length was when it started. Only whole turns go, because a
+ * tool's answer is refused without its question, and the latest always stays. Returns the new n. */
+int gemini_forget_turns(sb *contents, size_t *starts, int n, int cap, size_t max);
+
 void gemini_body(sb *body, const char *system, const char *tools, const sb *contents);
 
 #endif

@@ -1109,7 +1109,7 @@ static void test_web(void)
 	tr_web_advance(s, st, 9.0);
 	CHECK(tr_web_scroll_of(s, TR_WEB_CHAT) == bottom - 100);
 
-	/* The mascot is quiet when idle, and talks through an answer and on for about as long as it takes to say it. */
+	/* The mascot is quiet when idle, and talks through an answer until it's all been said. */
 	const uint8_t idle_status[] = { WEB_IDLE, 'o', 'k' };
 	uint8_t talk_status[sizeof(WEB_REPLYING)] = { WEB_BUSY };
 	memcpy(talk_status + 1, WEB_REPLYING, sizeof(WEB_REPLYING) - 1);
@@ -1139,9 +1139,146 @@ static void test_web(void)
 	tr_web_advance(s, st, 300.1);
 	n = put_frame(frame, WEB_F_STATUS, idle_status, sizeof(idle_status));
 	tr_web_feed(st, TR_WEB_CHAT, frame, n);
-	CHECK(tr_web_advance(s, st, 303.02) != tr_web_advance(s, st, 303.12));
 	tr_web_render(s, st, &theme, 303.12, dst);
 	CHECK(tr_web_advance(s, st, 305.02) == tr_web_advance(s, st, 305.12));
+	free(s);
+	free(st);
+	free(px);
+	free(tiles);
+}
+
+/* Whether cell col of row is drawn in the chat's body text colour, with the chat scrolled to the top. */
+static int said_cell(const uint32_t *px, int row, int col)
+{
+	enum { CHAT_Y = 220, TEXT_RGB = 190 | 245 << 8 | 210 << 16 };
+	return (px[(size_t)(CHAT_Y + row * WEB_ROW_H + 5) * 480 + (size_t)(WEB_MARGIN + col * WEB_ADVANCE + 2)] & 0xffffff) == TEXT_RGB;
+}
+
+static void test_web_writing_out(void)
+{
+	static tr_glyph glyphs[256];
+	static uint8_t mask[16 * 8], frame[1 << 16];
+	memset(mask, 255, sizeof(mask));
+	for (int i = 0; i < 256; i++)
+		glyphs[i] = (tr_glyph){ mask, 8, 16, 0, 0, 10.0f };
+	uint8_t *tiles = calloc(1, (size_t)(WEB_PALETTE * WEB_SHADES + 1) * 12 * 8 * 4);
+	uint32_t *px = calloc(480 * 734, 4);
+	const tr_surface dst = { (uint8_t *)px, 480 * 4, 480, 734 };
+	tr_web_status *st = calloc(1, tr_web_status_size());
+	tr_web *s = calloc(1, tr_web_size());
+	const tr_web_theme theme = web_test_theme(glyphs, tiles);
+	tr_web_init(s);
+	tr_web_status_init(st);
+
+	/* The user's words and notes are just there; what Blip says starts from nothing. */
+	static const uint8_t asked[] = { WEB_S_USER, '>', ' ', 'h', 'i' };
+	static const uint8_t note[] = { WEB_S_DIM, '*', ' ', 'n' };
+	static const uint8_t oops[] = { WEB_S_ERROR, 'n', 'o' };
+	char line[41];
+	memset(line, 'w', 40);
+	size_t n = put_row(frame, 0, asked, sizeof(asked));
+	n += put_row(frame + n, 1, note, sizeof(note));
+	n += put_row(frame + n, 2, line, 40);
+	n += put_row(frame + n, 3, line, 40);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 1.0);
+	tr_web_render(s, st, &theme, 1.0, dst);
+	CHECK(tr_web_scroll_of(s, TR_WEB_CHAT) == 0);
+	CHECK(!said_cell(px, 2, 0));
+
+	/* A tenth of a second is a few characters, and each frame shows more. */
+	const uint64_t key = tr_web_advance(s, st, 1.1);
+	tr_web_render(s, st, &theme, 1.1, dst);
+	CHECK(said_cell(px, 2, 0) && said_cell(px, 2, 2));
+	CHECK(!said_cell(px, 2, 15) && !said_cell(px, 3, 0));
+	CHECK(tr_web_advance(s, st, 1.2) != key);
+
+	/* A tap shows the lot, and doesn't press anything. */
+	tr_web_touch(s, s, st, TR_WEB_DOWN, 100, 300, 1.2);
+	CHECK(tr_web_touch(s, s, st, TR_WEB_UP, 100, 300, 1.2).kind == TR_WEB_NONE);
+	tr_web_advance(s, st, 1.2);
+	tr_web_render(s, st, &theme, 1.2, dst);
+	CHECK(said_cell(px, 2, 39) && said_cell(px, 3, 39));
+
+	/* When it's caught up the last row can still grow, and what's new isn't there at once. */
+	static char longer[80];
+	memset(longer, 'w', sizeof(longer));
+	n = put_row(frame, 3, longer, 46);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 1.21);
+	tr_web_render(s, st, &theme, 1.21, dst);
+	CHECK(said_cell(px, 3, 39) && !said_cell(px, 3, 45));
+	tr_web_advance(s, st, 1.6);
+	tr_web_render(s, st, &theme, 1.6, dst);
+	CHECK(said_cell(px, 3, 45));
+
+	/* It stops for breath after a sentence, but not at the point in 3.5. */
+	static const uint8_t sentence[] = "ab. cd";
+	static const uint8_t number[] = "3.5 cd";
+	tr_web_advance(s, st, 2.0);
+	n = put_row(frame, 4, sentence, 6);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 2.0 + 5.5 / 45.0);
+	tr_web_render(s, st, &theme, 2.2, dst);
+	CHECK(said_cell(px, 4, 0) && !said_cell(px, 4, 5));
+	tr_web_advance(s, st, 2.6);
+	tr_web_advance(s, st, 3.0);
+	n = put_row(frame, 5, number, 6);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 3.0 + 6.5 / 45.0);
+	tr_web_render(s, st, &theme, 3.2, dst);
+	CHECK(said_cell(px, 5, 5));
+
+	/* A new question doesn't wait for the end of the last answer. */
+	n = 0;
+	for (int i = 6; i < 12; i++)
+		n += put_row(frame + n, i, line, 40);
+	n += put_row(frame + n, 12, oops, sizeof(oops));
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 4.0);
+	CHECK(tr_web_advance(s, st, 4.05) != tr_web_advance(s, st, 4.15));
+	n = put_row(frame, 13, asked, sizeof(asked));
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 4.2);
+	const uint64_t waiting = tr_web_advance(s, st, 4.2);
+	CHECK(tr_web_advance(s, st, 4.2) == waiting);
+	tr_web_render(s, st, &theme, 4.2, dst);
+	CHECK(tr_web_advance(s, st, 8.02) == tr_web_advance(s, st, 8.12));
+
+	/* An answer that came in while the app was closed is all there when it's opened again. */
+	n = put_row(frame, 14, line, 40);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 100.0);
+	CHECK(tr_web_advance(s, st, 100.02) == tr_web_advance(s, st, 100.12));
+
+	/* A new chat starts over, and rows taken away don't leave it past the end. */
+	n = put_frame(frame, WEB_F_ROWS, "\x03\x00", 2);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 101.0);
+	tr_web_render(s, st, &theme, 101.0, dst);
+	tr_web_advance(s, st, 102.0);
+	n = put_frame(frame, WEB_F_RESET, "", 0);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_advance(s, st, 102.0);
+	n = put_row(frame, 0, line, 40);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	tr_web_render(s, st, &theme, 102.0, dst);
+	tr_web_advance(s, st, 102.05);
+	tr_web_render(s, st, &theme, 102.05, dst);
+	CHECK(said_cell(px, 0, 0) && !said_cell(px, 0, 20));
+
+	/* webd can't make it read past a row with cut-off controls, or a row of nothing. */
+	static const uint8_t cut[] = { 'a', WEB_C_LINK };
+	static const uint8_t art[] = { WEB_ART_MARK, 3, 3 };
+	n = put_row(frame, 1, cut, sizeof(cut));
+	n += put_row(frame + n, 2, "", 0);
+	n += put_row(frame + n, 3, art, sizeof(art));
+	n += put_row(frame + n, 4, line, 40);
+	tr_web_feed(st, TR_WEB_CHAT, frame, n);
+	for (double t = 103.0; t < 106.0; t += 0.04) {
+		tr_web_advance(s, st, t);
+		tr_web_render(s, st, &theme, t, dst);
+	}
 	free(s);
 	free(st);
 	free(px);
@@ -1175,6 +1312,7 @@ int main(void)
 	test_files_status();
 	test_files_render();
 	test_web();
+	test_web_writing_out();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -158,13 +158,30 @@ void gemini_add_results(sb *contents, const sb *results)
 	sb_adds(contents, "]}");
 }
 
+int gemini_forget_turns(sb *contents, size_t *starts, int n, int cap, size_t max)
+{
+	int first = n >= cap ? n - cap + 1 : 0;
+	while (first < n - 1 && contents->n - starts[first] > max)
+		first++;
+	if (first <= 0 || first >= n)
+		return n;
+	const size_t cut = starts[first] + 1;  /* and the comma in front of it */
+	contents->n -= cut;
+	memmove(contents->s, contents->s + cut, contents->n);
+	contents->s[contents->n] = '\0';
+	for (int i = first + 1; i < n; i++)
+		starts[i - first] = starts[i] - cut;
+	starts[0] = 0;
+	return n - first;
+}
+
 void gemini_body(sb *body, const char *system, const char *tools, const sb *contents)
 {
 	sb_adds(body, "{\"systemInstruction\":{\"parts\":[{\"text\":");
 	json_quote(body, system, strlen(system));
 	sb_adds(body, "}]},\"tools\":");
 	sb_adds(body, tools);
-	sb_adds(body, ",\"generationConfig\":{\"maxOutputTokens\":16000},\"contents\":[");
+	sb_adds(body, ",\"generationConfig\":{\"maxOutputTokens\":4000},\"contents\":[");
 	sb_add(body, contents->s, contents->n);
 	sb_adds(body, "]}");
 }

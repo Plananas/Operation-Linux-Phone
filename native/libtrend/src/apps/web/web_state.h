@@ -51,9 +51,12 @@ struct tr_web {
 	unsigned seen_scroll[WEB_SLOTS];
 	double last_advance;
 
-	/* the mascot talks while an answer comes in, and for about as long as it would take to say it */
-	int replying, talk_rows;
-	double talk_start, talk_until;
+	/* The chat is written out as Blip says it. Rows before reveal_row are all showing and reveal_cells of that row
+	 * are; the rest of it and everything after are still to come. Time left over waits in reveal_budget, counted
+	 * in characters, and a pause is just that going below zero. */
+	int reveal_row, reveal_cells;
+	double reveal_budget;
+	double talk_until;             /* the mascot talks until then */
 
 	/* the touch in progress */
 	int down, moved, pressed;
@@ -69,5 +72,10 @@ struct tr_web {
 enum { PRESS_NONE, PRESS_TAB_CHAT, PRESS_TAB_PAGE, PRESS_INPUT, PRESS_KEY0 };
 
 int web_content_y(int tab);
+
+/* How many rows of tab there are to see: on the chat, not the ones Blip hasn't got to. */
+int web_rows_showing(const tr_web *s, const tr_web_status *st, int tab);
+/* How many of the cells in row i of tab to draw. */
+int web_cells_showing(const tr_web *s, const web_doc *d, int tab, int i);
 
 #endif

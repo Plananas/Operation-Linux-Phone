@@ -42,7 +42,7 @@ static void draw_art_row(tr_surface dst, const web_row *r, const tr_web_theme *t
 }
 
 /* The bytes are from webd, so every length is checked. */
-static void draw_text_row(tr_surface dst, const web_row *r, const tr_web_theme *t, int y)
+static void draw_text_row(tr_surface dst, const web_row *r, const tr_web_theme *t, int y, int showing)
 {
 	tr_colour colour = TEXT;
 	int run = 0, col = 0, i = 0;       /* run: 0 none, 1 link, 2 field */
@@ -70,7 +70,9 @@ static void draw_text_row(tr_surface dst, const web_row *r, const tr_web_theme *
 			int end = i;
 			while (end < r->len && r->b[end] >= 0x20)
 				end++;
-			const int n = end - i, x = WEB_MARGIN + col * WEB_ADVANCE;
+			const int n = tr_min(end - i, showing - col), x = WEB_MARGIN + col * WEB_ADVANCE;
+			if (n <= 0)
+				return;
 			tr_draw_text(dst, t->font19, r->b + i, n, (float)x, y - 1, run == 1 ? LINK : run == 2 ? TEXT : colour);
 			if (run == 1)
 				tr_fill_rect(dst, (tr_rect){ y + WEB_ROW_H - 3, y + WEB_ROW_H - 2, x, x + n * WEB_ADVANCE }, LINK);
@@ -80,20 +82,22 @@ static void draw_text_row(tr_surface dst, const web_row *r, const tr_web_theme *
 	}
 }
 
-static void draw_rows(tr_surface dst, const web_doc *d, const tr_web_theme *t, int y0, int y1, int scroll)
+static void draw_rows(tr_surface dst, const tr_web *s, const tr_web_status *st, const tr_web_theme *t, int y0, int y1)
 {
+	const web_doc *d = &st->docs[s->tab];
+	const int scroll = (int)s->scroll[s->tab], rows = web_rows_showing(s, st, s->tab);
 	tr_surface view = { dst.px + (size_t)y0 * (size_t)dst.stride, dst.stride, dst.w, y1 - y0 };
 	const int first = scroll / WEB_ROW_H;
-	const int last = tr_min(d->n_rows - 1, (scroll + view.h) / WEB_ROW_H);
+	const int last = tr_min(rows - 1, (scroll + view.h) / WEB_ROW_H);
 	for (int i = first; i <= last; i++) {
 		const web_row *r = &d->rows[i];
 		const int y = i * WEB_ROW_H - scroll;
 		if (r->len && r->b[0] == WEB_ART_MARK)
 			draw_art_row(view, r, t, y);
 		else
-			draw_text_row(view, r, t, y);
+			draw_text_row(view, r, t, y, web_cells_showing(s, d, s->tab, i));
 	}
-	const int total = d->n_rows * WEB_ROW_H;
+	const int total = rows * WEB_ROW_H;
 	if (total > view.h) {
 		const int h = tr_max(24, view.h * view.h / total);
 		const int ty = (view.h - h) * scroll / (total - view.h);
@@ -337,7 +341,7 @@ void tr_web_render(const tr_web *s, const tr_web_status *st, const tr_web_theme 
 	const int busy = d->state == WEB_BUSY;
 	tr_fill_rect(dst, (tr_rect){ 0, dst.h, 0, dst.w }, BG);
 	tr_fill_stripes(dst, (tr_rect){ y0, CONTENT_Y1, 0, dst.w }, 3, SCAN);
-	draw_rows(dst, d, t, y0, CONTENT_Y1, (int)s->scroll[s->tab]);
+	draw_rows(dst, s, st, t, y0, CONTENT_Y1);
 	draw_tabs(dst, s, st, t);
 	if (s->tab == TR_WEB_CHAT) {
 		if (d->n_rows || s->composing)

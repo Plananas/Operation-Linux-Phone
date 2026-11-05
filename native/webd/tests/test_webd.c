@@ -411,7 +411,7 @@ static void test_gemini_reply(void)
 	json_val v, item, f;
 	size_t at = 0;
 	CHECK(json_get(body.s, body.n, "systemInstruction.parts", &v));
-	CHECK(json_get(body.s, body.n, "generationConfig.maxOutputTokens", &v) && json_number(v) == 16000);
+	CHECK(json_get(body.s, body.n, "generationConfig.maxOutputTokens", &v) && json_number(v) == 4000);
 	CHECK(json_get(body.s, body.n, "contents", &v));
 	CHECK(json_each(v, &at, &item) && json_get(item.s, item.n, "role", &f) && str_is(f, "user"));
 	CHECK(json_each(v, &at, &item) && json_get(item.s, item.n, "role", &f) && str_is(f, "model"));
@@ -472,6 +472,48 @@ static void test_gemini_reply(void)
 	}
 }
 
+static void test_gemini_forget_turns(void)
+{
+	sb contents = { 0 };
+	size_t starts[4];
+	int n = 0;
+	const char *const said[] = { "aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccc", "dddddddddddddddddddd", "eeeeeeeeeeeeeeeeeeee" };
+	for (int i = 0; i < 3; i++) {
+		starts[n++] = contents.n;
+		gemini_add_user(&contents, said[i], strlen(said[i]));
+	}
+	const size_t whole = contents.n;
+
+	/* Under the limit, nothing goes. */
+	CHECK(gemini_forget_turns(&contents, starts, n, 4, whole) == 3 && contents.n == whole);
+	/* Over it, the oldest goes, and what's left is still a valid list with the right starts. */
+	n = gemini_forget_turns(&contents, starts, n, 4, whole - 1);
+	CHECK(n == 2 && starts[0] == 0 && !strstr(contents.s, said[0]));
+	sb list = { 0 };
+	sb_adds(&list, "[");
+	sb_add(&list, contents.s, contents.n);
+	sb_adds(&list, "]");
+	CHECK(json_valid(list.s, list.n));
+	sb_free(&list);
+	CHECK(contents.s[starts[1]] == ',' && strstr(contents.s + starts[1], said[2]));
+	/* However small the limit, the latest stays. */
+	n = gemini_forget_turns(&contents, starts, n, 4, 1);
+	CHECK(n == 1 && starts[0] == 0 && contents.s[0] == '{' && strstr(contents.s, said[2]));
+	/* A full table makes room whatever the size. */
+	for (int i = 3; i < 5; i++) {
+		starts[n++] = contents.n;
+		gemini_add_user(&contents, said[i], strlen(said[i]));
+	}
+	starts[n++] = contents.n;
+	gemini_add_user(&contents, said[0], strlen(said[0]));
+	n = gemini_forget_turns(&contents, starts, n, 4, 100000);
+	CHECK(n == 3 && !strstr(contents.s, said[2]) && strstr(contents.s, said[3]));
+	/* Nothing there at all is fine. */
+	sb empty = { 0 };
+	CHECK(gemini_forget_turns(&empty, starts, 0, 4, 1) == 0);
+	sb_free(&contents);
+}
+
 static void test_ascii(void)
 {
 	CHECK(ascii_tile(0, 0, 0) == 0);
@@ -513,6 +555,7 @@ int main(void)
 	test_json();
 	test_json_each();
 	test_gemini_reply();
+	test_gemini_forget_turns();
 	test_ascii();
 	printf("%d checks, %d failures\n", checks, failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;

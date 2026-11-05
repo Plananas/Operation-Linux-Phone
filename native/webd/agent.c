@@ -1,9 +1,9 @@
 /* The agent's turn: send the conversation, stream the reply on to the screen, run any tools it asks for, and
  * go round again until it's finished.
  *
- * The conversation is kept as the JSON text of the contents array and only ever added to, so what's sent next
- * time starts with exactly what was sent last time, thought signatures included. A turn that doesn't finish is
- * cut off whole.
+ * The conversation is kept as the JSON text of the contents array, thought signatures included, and all of it is
+ * sent with every request. A turn that doesn't finish is cut off whole, and the oldest turns are forgotten once
+ * there's too much to keep sending. The screen goes on showing them.
  */
 #include "agent.h"
 
@@ -22,8 +22,9 @@
 #include "wire.h"
 
 enum {
-	MAX_ROUNDS = 10,
-	TOOL_TEXT_MAX = 24000, TOOL_PAGE_WIDTH = 110, TOOL_PAGE_MAX = 4 * 1024 * 1024,
+	MAX_ROUNDS = 5,                /* every round is a request, and the free tier counts those per day */
+	HISTORY_MAX = 24000, MAX_TURNS = 64,
+	TOOL_TEXT_MAX = 8000, TOOL_PAGE_WIDTH = 110, TOOL_PAGE_MAX = 4 * 1024 * 1024,
 	EVENT_MAX = 8 * 1024 * 1024, REDRAW_MS = 120, API_SILENCE_S = 120, TOOL_SILENCE_S = 20,
 };
 
@@ -56,6 +57,8 @@ typedef struct {
 	doc_row *shown;
 	int n_shown;
 	sb contents;                   /* the JSON objects of the contents array, comma-separated */
+	size_t turn_at[MAX_TURNS];     /* where each turn in it starts */
+	int n_turns;
 	char context[4096];            /* the page in the browser, for the next message */
 	sb queued;                     /* sent while busy: goes next */
 	int stop, new_chat;
@@ -382,7 +385,9 @@ static void drop_turn(agent *a, size_t start_of_turn, int style, const char *why
 
 static void run_turn(agent *a, const char *text)
 {
+	a->n_turns = gemini_forget_turns(&a->contents, a->turn_at, a->n_turns, MAX_TURNS, HISTORY_MAX);
 	const size_t start_of_turn = a->contents.n;
+	a->turn_at[a->n_turns++] = start_of_turn;
 	sb content = { 0 };
 	add_gap(a);
 	{
@@ -475,7 +480,9 @@ static void run_turn(agent *a, const char *text)
 	}
 	sb_free(&system);
 	if (!finished)
-		drop_turn(a, start_of_turn, WEB_S_DIM, "(gave up after 10 rounds of tools)");
+		drop_turn(a, start_of_turn, WEB_S_DIM, "(gave up: that took too many searches)");
+	if (finished != 1)
+		a->n_turns--;
 	if (a->contents.s)
 		a->contents.s[a->contents.n] = '\0';
 	gemini_reply_clear(&a->reply);
@@ -488,6 +495,7 @@ static void reset_chat(agent *a)
 {
 	doc_free(&a->d);
 	a->contents.n = 0;
+	a->n_turns = 0;
 	a->base_rows = a->base_targets = 0;
 	a->n_shown = 0;
 	a->context[0] = '\0';
