@@ -160,13 +160,14 @@ int main(void)
 	CHECK(st.title[0] == '\0' && st.position == 0.0 && st.track == -1);
 	CHECK(strcmp(st.error, "Can't read this music") == 0);
 
-	/* Volume stays in range. */
-	for (int i = 0; i < 40; i++)
-		cmd(p, TR_CMD_VOLUME, 1);
+	/* Volume is set to a level, and stays in range. */
+	cmd(p, TR_CMD_VOLUME, 7);
+	tr_player_status(p, &st);
+	CHECK(st.volume == 7);
+	cmd(p, TR_CMD_VOLUME, TR_MUSIC_VOLUME_MAX + 40);
 	tr_player_status(p, &st);
 	CHECK(st.volume == TR_MUSIC_VOLUME_MAX);
-	for (int i = 0; i < 40; i++)
-		cmd(p, TR_CMD_VOLUME, -1);
+	cmd(p, TR_CMD_VOLUME, -40);
 	tr_player_status(p, &st);
 	CHECK(st.volume == 0);
 

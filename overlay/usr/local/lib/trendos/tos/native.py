@@ -145,7 +145,6 @@ _SIGNATURES = {
     "tr_music_init":        (None, [_vp]),
     "tr_music_status_init": (None, [_vp, c_char_p]),
     "tr_music_touch":       (MusicCmd, [_vp, _vp, _vp, _i, _i, _i]),
-    "tr_music_on_key":      (MusicCmd, [_i, _i]),
     "tr_music_follow":      (None, [_vp, _vp, _vp]),
     "tr_music_frame_key":   (c_uint64, [_vp, _vp, c_double]),
     "tr_music_render":      (None, [_vp, _vp, _vp, _vp, _vp, Surface]),
@@ -500,6 +499,10 @@ def files_render(state, status, theme, now, dst):
 MUSIC_RESCAN, MUSIC_RELEASE = MusicCmd(7, 0), MusicCmd(8, 0)    # trend/apps/music.h
 
 
+def music_volume(level):
+    return MusicCmd(6, level)                                   # TR_CMD_VOLUME
+
+
 def _aligned(size):
     """Opaque zeroed memory for a C struct, aligned for the doubles inside it."""
     return (c_double * (size // ctypes.sizeof(c_double) + 1))()
@@ -535,14 +538,6 @@ def music_theme(tables, accent, error, tiles, cw, ch, shades):
 def music_touch(state, status, event, x, y):
     """Apply a touch in app-area coordinates. Returns a command for the player."""
     return _lib.tr_music_touch(state, state, status, TOUCH_EVENTS[event], x, y)
-
-
-def music_on_key(code, pressed):
-    return _lib.tr_music_on_key(code, pressed)
-
-
-def music_key_used(cmd):
-    return cmd.kind != 0 or cmd.arg != 0
 
 
 def music_frame_key(state, status, now):

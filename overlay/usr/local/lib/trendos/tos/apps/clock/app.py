@@ -303,6 +303,9 @@ class ClockApp(App):
             self._stop_ring()                   # leaving the alarm screen = dismiss
         self.mode, self.edit, self.pressed = "main", None, None
 
+    def wants_volume_keys(self):
+        return self.mode == "ring"              # they snooze
+
     def on_key(self, code, pressed):
         if self.mode == "ring" and code in (KEY_VOLDOWN, KEY_VOLUP):
             if pressed:

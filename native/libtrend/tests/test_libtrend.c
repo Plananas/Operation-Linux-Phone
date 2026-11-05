@@ -604,16 +604,6 @@ static void test_music_touch(void)
 	tr_music_touch(s, s, &st, TR_MUSIC_MOVE, -50, BAR_Y);
 	c = tr_music_touch(s, s, &st, TR_MUSIC_UP, -50, BAR_Y);
 	CHECK(c.kind == TR_CMD_SEEK && c.arg == 0);
-
-	/* Volume keys act when pressed. Other keys aren't ours. */
-	c = tr_music_on_key(115, 1);
-	CHECK(c.kind == TR_CMD_VOLUME && c.arg == 1);
-	c = tr_music_on_key(114, 1);
-	CHECK(c.kind == TR_CMD_VOLUME && c.arg == -1);
-	c = tr_music_on_key(115, 0);
-	CHECK(c.kind == TR_CMD_NONE && c.arg == 1);
-	c = tr_music_on_key(30, 1);
-	CHECK(c.kind == TR_CMD_NONE && c.arg == 0);
 	free(s);
 }
 

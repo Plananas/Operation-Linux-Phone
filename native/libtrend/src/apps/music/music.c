@@ -5,8 +5,6 @@
 
 #include "music_state.h"
 
-#define VOL_DOWN_KEY 114
-#define VOL_UP_KEY 115
 #define TAP_SLOP 10                    /* pixels a finger may wander and still be a tap */
 #define PLAY_TICKS_PER_SECOND 20.0     /* how often the waveform redraws */
 #define VIZ_TICKS_PER_SECOND 30.0      /* how often the visualiser does */
@@ -150,15 +148,6 @@ tr_music_cmd tr_music_touch(const tr_music *in, tr_music *out, const tr_music_st
 	next.version++;
 	*out = next;
 	return cmd;
-}
-
-tr_music_cmd tr_music_on_key(int code, int pressed)
-{
-	if (code != VOL_DOWN_KEY && code != VOL_UP_KEY)
-		return NO_CMD;
-	if (!pressed)
-		return (tr_music_cmd){ TR_CMD_NONE, 1 };   /* ours, but acted on when pressed */
-	return (tr_music_cmd){ TR_CMD_VOLUME, code == VOL_UP_KEY ? 1 : -1 };
 }
 
 void tr_music_follow(const tr_music *in, tr_music *out, const tr_music_status *status)

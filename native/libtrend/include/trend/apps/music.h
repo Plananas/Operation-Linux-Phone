@@ -56,7 +56,7 @@ typedef enum {
 	TR_CMD_NEXT,
 	TR_CMD_PREV,                   /* start of this track, or the previous one if near its start */
 	TR_CMD_SEEK,                   /* arg: position in thousandths of the track */
-	TR_CMD_VOLUME,                 /* arg: steps up or down */
+	TR_CMD_VOLUME,                 /* arg: the level, 0 .. TR_MUSIC_VOLUME_MAX */
 	TR_CMD_RESCAN,                 /* look for new files */
 	TR_CMD_RELEASE,                /* pause and let go of the audio device, for an alarm or the radio */
 } tr_music_cmd_kind;
@@ -86,8 +86,6 @@ void tr_music_status_init(tr_music_status *out, const char *error);
 enum { TR_MUSIC_DOWN, TR_MUSIC_MOVE, TR_MUSIC_UP };
 tr_music_cmd tr_music_touch(const tr_music *in, tr_music *out, const tr_music_status *status, int event, int x, int y);
 
-/* A hardware key press. kind is TR_CMD_NONE if the app doesn't use this key. */
-tr_music_cmd tr_music_on_key(int code, int pressed);
 
 /* Keep the playing track in view when it changes by itself. */
 void tr_music_follow(const tr_music *in, tr_music *out, const tr_music_status *status);

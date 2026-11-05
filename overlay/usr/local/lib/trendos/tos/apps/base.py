@@ -21,9 +21,14 @@ class App:
     def on_close(self):
         """The app was closed (Back, Home or title tap). Stop what on_open started."""
 
+    def wants_volume_keys(self):
+        """True while the volume keys mean something else in this app. They then go to on_key()
+        rather than changing the volume."""
+        return False
+
     def on_key(self, code, pressed):
-        """Hardware key other than Home/Back/Power (e.g. volume: 114 down, 115 up).
-        Return True if handled."""
+        """Hardware key other than Home/Back/Power, and not the volume keys unless
+        wants_volume_keys(). Return True if handled."""
         return False
 
     def touch(self, ev, x, y):

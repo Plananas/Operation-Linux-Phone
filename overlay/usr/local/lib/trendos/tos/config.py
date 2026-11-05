@@ -8,6 +8,7 @@ NPAGES = 3                         # triple buffering (virtual size is 480 x 240
 TOUCH_DEV = "/dev/input/event1"    # ist30xx, MT protocol B; also carries KEY_BACK
 KEYS_DEV = "/dev/input/event0"     # sci-keypad: Home, Power, Volume
 KEY_HOME, KEY_BACK, KEY_POWER = 102, 158, 116
+KEY_VOLDOWN, KEY_VOLUP = 114, 115
 BACKLIGHT = "/sys/class/backlight/panel/brightness"
 BRIGHTNESS = 160                   # never write 0: the driver then disables the backlight
 
@@ -15,6 +16,7 @@ BRIGHTNESS = 160                   # never write 0: the driver then disables the
 LIBTREND = os.environ.get("TREND_LIBTREND", "/usr/local/lib/trendos/libtrend.so")
 LIBTRENDPLAY = "/usr/local/lib/trendos/libtrendplay.so"
 MUSIC_DIR = "/data/music"
+VOLUME_FILE = "/var/lib/trendos/volume"
 FILES_DIR = "/data/files"                  # the Files app's other shared folder
 FILES_TMP = "/data/.filesd-tmp"            # uploads wait here: same disk, so finishing is a rename
 FILESD = "/usr/local/lib/trendos/filesd"

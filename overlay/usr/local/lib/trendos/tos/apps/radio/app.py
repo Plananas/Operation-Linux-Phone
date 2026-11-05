@@ -9,12 +9,12 @@ the top edge, CRT scanlines, outlined keys.
     characters (radio off: a flat perspective grid).
   * "tune" card: a drum dial: ticks wrap round a cylinder (they bunch up and dim towards the
     edges). Drag or fling it; it snaps to 0.1 MHz. Tap a number on it to jump there.
-  * keys: << -1 MHz, < -0.1, on/off, > +0.1, >> +1 (hold < > to repeat). Volume keys work.
+  * keys: << -1 MHz, < -0.1, on/off, > +0.1, >> +1 (hold < > to repeat).
 
 Hardware: tos/hw/fm.py (Broadcom FM core over the BT UART), driven by one worker thread so the UI
 never waits on it (power-up takes ~4 s). The visualiser reads the same audio from the codec's
 line-in with `arecord` (16 kHz mono). Opening the app turns the radio on, closing turns it off.
-Wired headphones are the antenna. Last frequency + volume are kept in STATE_FILE.
+Wired headphones are the antenna. The last frequency is kept in STATE_FILE.
 """
 import json, math, os, subprocess, threading, time
 
@@ -25,7 +25,7 @@ from ...config import W, TOP, APP_H, ACCENT, SHADES, NS, CW, CH, GREEN, DIMGREEN
 from ...render import card_tiles
 from ...gfx import font, to_rgbx, text_len, draw_text
 from ... import canvas, native
-from ...hw import audio, fm
+from ...hw import audio, fm, volume
 from ...ui import BG, FRAME, FRAME_HI, PANEL, SCAN, DIM, MID, FLARE, ERR, KEY_STYLE, mix as _mix, card as _card
 from ..base import App
 
@@ -33,7 +33,6 @@ STATE_FILE = "/var/lib/trendos/radio.json"
 CAPTURE = ["arecord", "-q", "-D", f"hw:CARD={fm.CARD},DEV=0", "-f", "S16_LE", "-c", "1", "-r", "16000", "-t", "raw"]
 # with a Bluetooth speaker/headphones connected: CD-quality capture, streamed to it as well
 CAPTURE_BT = ["arecord", "-q", "-D", f"hw:CARD={fm.CARD},DEV=0", "-f", "S16_LE", "-c", "2", "-r", "44100", "-t", "raw"]
-KEY_VOLDOWN, KEY_VOLUP = 114, 115
 
 # ---- palette: the shared TREND OS look (tos/ui.py) --------------------------------------------
 GRID = (0, 34, 19)
@@ -78,15 +77,23 @@ def _phosphor(v):
     return _mix(PANEL, ACCENT, v / 0.75) if v < 0.75 else _mix(ACCENT, FLARE, (v - 0.75) / 0.25)
 
 
+def _at_volume(pcm):
+    """16-bit samples, turned down for Bluetooth. Wired headphones have the codec's volume."""
+    gain = volume.gain()
+    if gain >= 1.0:
+        return pcm
+    return (np.frombuffer(pcm, np.int16) * gain).astype(np.int16).tobytes()
+
+
 class RadioApp(App):
     name = "Radio"
 
     def __init__(self):
-        self.freq, self.vol = 100.0, 10
+        self.freq = 100.0
         try:
             with open(STATE_FILE) as f:
                 st = json.load(f)
-            self.freq, self.vol = fm.clamp(float(st["freq"])), int(st["vol"])
+            self.freq = fm.clamp(float(st["freq"]))
         except Exception:
             pass
         self.disp_f = self.freq             # dial position (float MHz, animates)
@@ -101,6 +108,7 @@ class RadioApp(App):
         self.want_on, self.closing = False, False
         self.fm = fm.FM()
         self._lock, self._wake = threading.Lock(), threading.Event()
+        volume.on_change(lambda _: self._wake.set())
         self._worker = None
         self._cap = None                    # arecord process
         self._bt_play = None                # aplay to the Bluetooth device, while one is connected
@@ -138,7 +146,7 @@ class RadioApp(App):
         try:
             os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
             with open(STATE_FILE, "w") as f:
-                json.dump({"freq": round(self.target(), 1), "vol": self.vol}, f)
+                json.dump({"freq": round(self.target(), 1)}, f)
         except OSError:
             pass
 
@@ -161,8 +169,9 @@ class RadioApp(App):
                 if want and not self.fm.is_on:
                     self.state, self.msg = "starting", ""
                     t = self.target()
-                    self.fm.on(t, self.vol)
-                    self.tuned, self.hw_vol = t, self.vol
+                    level = volume.level()
+                    self.fm.on(t, level)
+                    self.tuned, self.hw_vol = t, level
                     self._start_capture()
                     self.state, next_rssi = "on", 0.0
                 elif not want and self.fm.is_on:
@@ -175,7 +184,7 @@ class RadioApp(App):
                     if t != self.tuned:
                         self.fm.tune(t); self.tuned = t
                         next_rssi = time.monotonic() + 0.15
-                    want = 0 if self.bt_out else self.vol      # wired headphones muted on Bluetooth
+                    want = 0 if self.bt_out else volume.level()      # wired headphones muted on Bluetooth
                     if want != self.hw_vol:
                         fm.set_volume(want); self.hw_vol = want
                     if time.monotonic() >= self._bt_check:       # Bluetooth audio came / went?
@@ -230,7 +239,7 @@ class RadioApp(App):
             b, carry = b[:n], b[n:]
             if out is not None:
                 try:
-                    out.stdin.write(b)
+                    out.stdin.write(_at_volume(b))
                 except (BrokenPipeError, OSError):
                     out = None                           # device went away: the worker notices
             a = np.frombuffer(b, np.int16)
@@ -253,14 +262,6 @@ class RadioApp(App):
         self.samples = np.zeros(4096, np.int16)
 
     # ---- input --------------------------------------------------------------------------------
-    def on_key(self, code, pressed):
-        if code in (KEY_VOLDOWN, KEY_VOLUP):
-            if pressed:
-                self.vol = max(0, min(fm.HP_VOL_MAX, self.vol + (1 if code == KEY_VOLUP else -1)))
-                self._wake.set()
-            return True
-        return False
-
     def _key_at(self, x, y):
         if KY <= y <= KY + KH:
             i = int((x - KX) // (KW + GX))
@@ -348,7 +349,7 @@ class RadioApp(App):
             return ("live", int(now * 30))                  # dial in motion: full frame rate
         if self.state in ("on", "starting"):
             return ("live", int(now * VIS_FPS))
-        return ("idle", self.state, self.msg, round(self.disp_f, 3), self.vol)
+        return ("idle", self.state, self.msg, round(self.disp_f, 3), volume.level())
 
     # ---- drawing ---------------------------------------------------------------------------------
     # Everything static is pre-rendered once; each frame is a few whole-array numpy operations
@@ -468,7 +469,7 @@ class RadioApp(App):
             self._prerender()
         buf = self._buf
         on = self.state == "on"
-        k = (self.state, self.msg, self.rssi, int(now * 8) % 4 if self.state == "starting" else 0, self.vol, self.bt_out)
+        k = (self.state, self.msg, self.rssi, int(now * 8) % 4 if self.state == "starting" else 0, volume.level(), self.bt_out)
         if self._shown.get("status") != k:
             self._region(DISP[1] + 6, DISP[1] + 42, self._draw_status, now)
             self._shown["status"] = k
@@ -509,11 +510,11 @@ class RadioApp(App):
             status, scol = "> off   (headphones = antenna)", MID
         y = DISP[1] + 14
         canvas.text(buf, 30, y, status, 17, scol)
-        vx = DISP[2] - 16 - fm.HP_VOL_MAX * 8
+        vx, level = DISP[2] - 16 - fm.HP_VOL_MAX * 8, volume.level()
         canvas.text(buf, vx - 34, y, "vol", 17, MID)
         for i in range(fm.HP_VOL_MAX):
             x = vx + i * 8
-            canvas.fill_rect(buf, y + 4, y + 17, x, x + 6, ACCENT if i < self.vol else DIM)
+            canvas.fill_rect(buf, y + 4, y + 17, x, x + 6, ACCENT if i < level else DIM)
 
     def _draw_freq(self, buf, now):
         txt = f"{self.target():.1f}"

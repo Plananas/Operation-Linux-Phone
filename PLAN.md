@@ -35,19 +35,19 @@ Partitions: SBOOT p1, SBOOT2 p2, PARAM p16, KERNEL p20, RECOVERY p21, system p24
 |---|---|
 | `config` | all constants, `PALETTE`, colour indices |
 | `native` | only door into C: numpy in, no pointers out |
-| `hw/` | `fb`, `inputdev`, `fm` (CLI `fmctl`), `btchip` (BCM43430A1: `RawUart` or `HciSocket`), `bluetooth` (`BtCtl`), `audio`, `sshmon` |
+| `hw/` | `fb`, `inputdev`, `fm` (CLI `fmctl`), `btchip` (BCM43430A1: `RawUart` or `HciSocket`), `bluetooth` (`BtCtl`), `audio`, `volume` (system level, kept in `VOLUME_FILE`; `on_change`, `gain`), `sshmon` |
 | `canvas` | fast 2D into RGBX: use for anything redrawn often. Rectangles half-open (PIL's inclusive) |
 | `gfx`, `ui` | fonts, `to_rgbx`; shared look (`native_card` fast, `card`, `Keys`) |
 | `render` | `draw_view(buf, shape, m9, K, cols, rows, x, y, tiles)`, K ≈ cols*1.5 fills; `card_tiles`, `MINI`, `matrix(tilt,a,b,c)`. Moving parts: update `shape.pts/fnrm/fcen` (see `Clock3D`) |
 | `models/` | `shape.py` (`Shape`, `boxes`, `extrude`, `arc`, `relief`), `icons.py` (`@model(name, colour)`), `registry.py` |
 | `keyboard` | `Keyboard(on_done, on_cancel, text)`, `KB_Y` |
 | `apps/` | `base.App`, one folder each. C in `native/libtrend/src/apps/`: calculator, music, files, web. Python: wifi (threads + keyboard example), radio (worker thread, 30 fps numpy), clock (alarms via `background()`), ssh, bluetooth, spotify (shelved) |
-| `shell`, `launcher`, `flight`, `transition`, `power`, `stats`, `title`, `boot` | main loop and region cache by `app.key()`; `Entry(model, app, opens, name, phase)`; icon flight to title badge (automatic); slide; power menu; stats; title; boot handover |
+| `shell`, `launcher`, `flight`, `transition`, `power`, `stats`, `title`, `volumebar`, `boot` | main loop and region cache by `app.key()`; `Entry(model, app, opens, name, phase)`; icon flight to title badge (automatic); slide; power menu; stats; title; boot handover |
 
 C rules: `native/README.md`. Other: `/usr/local/sbin/*` helpers, `bootimg/ramdisk/init`.
 
 ## 4. Adding an app
-1. `tos/apps/myapp/app.py` + `__init__.py` (`from .app import MyApp`), export in `tos/apps/__init__.py`. Subclass `App`: `name`, `touch(ev, x, y)` (screen coords), `key(now)` (hashable; render only runs when it changes), `render(now)` → RGBX array `(APP_H, W, 4)`. Optional: `on_open/on_close`, `on_key(code, pressed)` (True if used), `background(now)` (~1/s even closed; True wakes and fronts it), `keep_awake`.
+1. `tos/apps/myapp/app.py` + `__init__.py` (`from .app import MyApp`), export in `tos/apps/__init__.py`. Subclass `App`: `name`, `touch(ev, x, y)` (screen coords), `key(now)` (hashable; render only runs when it changes), `render(now)` → RGBX array `(APP_H, W, 4)`. Optional: `on_open/on_close`, `on_key(code, pressed)` (True if used; the shell keeps the volume keys unless `wants_volume_keys()`, and anything that plays follows `hw.volume`), `background(now)` (~1/s even closed; True wakes and fronts it), `keep_awake`.
 2. Icon: `@model("myicon", COLOUR)` returning `boxes`, `extrude` or `relief`, within ~±1.3 x/y, flat front. Preview: `cd /usr/local/lib/trendos && python3 -m tos.models myicon`.
 3. `Entry("myicon", MyApp(), phase=(a, b, c))` in `default_entries()` or `utilities_entries()`; submenu `opens="name"`.
 4. `tools/deploy.sh`, then `rc-service bootscreen status`. Log: `/var/log/bootscreen.log`.
@@ -81,7 +81,7 @@ Rules:
 
 **Bluetooth**: `btuart` (`bt-up`: `btchip.boot_raw(3000000, efs address)`, `btattach -B /dev/ttyS0 -P h4 -S 3000000`), `bluetooth` (BlueZ), `btaudio` (bluealsa, A2DP), `dbus`. Address from `/data/bt/bt_addr`. Alpine's `bluealsa` service segfaults: it reads past the stack top into env strings, so `btaudio` passes an 8 KB `STACK_PAD` env var. Storage `/usr/var/lib/bluealsa`. Radio streams to A2DP via `aplay -D trendbt:DEV=…`, wired headphones muted but still the antenna. **Play to Bluetooth only through `trendbt`** (`etc/alsa/conf.d/30-trendos-bt.conf`): it's pinned to 44.1 kHz, matching `--a2dp-force-audio-cd`, and resamples anything else. Asking BlueALSA 4.3.1 for a rate other than the stream's makes it renegotiate the codec, which fails with BlueZ 5.86 ("Transport already configured") and destroys the stream until the device reconnects, while BlueZ still shows it connected.
 
-**Music**: `src/apps/music/` = touches → `tr_music_cmd`, pure render (`music_viz.c`: visualiser). `native/player/` = thread scanning `/data/music`, libsndfile decode, ALSA output. Output: Bluetooth > headphones (`/sys/class/switch/h2w/state`) > speaker, routed on every open. Software volume 0-15. Viz uses 12 Goertzel bands from `status.scope`, before volume, so it works at volume 0 for silent tests. **Don't encode MP3 with libsndfile on the phone**: noise bursts, cause not traced; use FLAC. Player reads float and clips itself: 16-bit reads make loud MP3s wrap and float WAVs near-silent. Limits: 512 tracks, Latin-1 titles, nothing remembered across restart. Test: `player/tests/test_player.c` on ALSA `null`. ~24 % of a core playing with the app open, ~11 % closed.
+**Music**: `src/apps/music/` = touches → `tr_music_cmd`, pure render (`music_viz.c`: visualiser). `native/player/` = thread scanning `/data/music`, libsndfile decode, ALSA output. Output: Bluetooth > headphones (`/sys/class/switch/h2w/state`) > speaker, routed on every open. Software volume 0-15, set by the system volume. Viz uses 12 Goertzel bands from `status.scope`, before volume, so it works at volume 0 for silent tests. **Don't encode MP3 with libsndfile on the phone**: noise bursts, cause not traced; use FLAC. Player reads float and clips itself: 16-bit reads make loud MP3s wrap and float WAVs near-silent. Limits: 512 tracks, Latin-1 titles, nothing remembered across restart. Test: `player/tests/test_player.c` on ALSA `null`. ~24 % of a core playing with the app open, ~11 % closed.
 
 **Files**: `native/filesd/`, started by `apps/files/app.py` (`Popen`, off at boot), status lines read non-blocking. Root to bind :80, chowns shared folders to `trendfiles`, then setuid, no groups, NO_NEW_PRIVS: can accept but not open sockets. Ends with parent, on SIGTERM, after 30 idle min or 10 wrong PINs. One thread + one request per connection, max 16. Uploads: `/data/.filesd-tmp`, fsync, rename. Paths walked by component with O_NOFOLLOW. **Open each shared folder with `openat(root, ".")`, never dup: a dup shares its read position, so listings came back empty.** ~3-5 MB/s. Page: `usr/local/share/trendos/files/index.html`.
 
@@ -98,4 +98,4 @@ TWRP for this model · `adb root` on stock · SELinux permissive via cmdline · 
 `backup/` (SBOOT, SPL, PARAM originals, `pit.txt`, `kingo/`). Full image `backup/phone-image-2026-11-03/` (gitignored, restore steps in its README). Never wipe efs/prodnv/*nv/PARAM/MODEM/bootloaders on the phone. Stock zip in `firmware/stock/` (gitignored; samfw.com).
 
 ## 9. Next ideas
-Radio seek + RDS · Clock timer/stopwatch · Utilities: Display/Sound/About · Music: shuffle, albums, global volume keys, remember place · system monitor, notes, smart-home controller · web, DNS ad-block, MQTT services · ntfy notifications.
+Radio seek + RDS · Clock timer/stopwatch · Utilities: Display/Sound/About · Music: shuffle, albums, remember place · system monitor, notes, smart-home controller · web, DNS ad-block, MQTT services · ntfy notifications.

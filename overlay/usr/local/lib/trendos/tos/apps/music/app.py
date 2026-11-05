@@ -8,7 +8,7 @@ import numpy as np
 
 from ... import canvas, native
 from ...config import ACCENT, APP_H, CH, CW, MUSIC_DIR, NS, PALETTE, RED, TOP, W
-from ...hw import audio
+from ...hw import audio, volume
 from ...render import TILES
 from ..base import App
 
@@ -42,8 +42,13 @@ class MusicApp(App):
                 native.music_status_init(self._status, NOT_INSTALLED)
             else:
                 audio.on_take_output(self._release)
+                volume.on_change(self._set_volume)
+                self._set_volume(volume.level())
         else:
             native.player_command(self._player, native.MUSIC_RESCAN)
+
+    def _set_volume(self, level):
+        native.player_command(self._player, native.music_volume(level))
 
     def _release(self):
         native.player_command(self._player, native.MUSIC_RELEASE)
@@ -54,11 +59,6 @@ class MusicApp(App):
 
     def touch(self, ev, x, y):
         self._send(native.music_touch(self._state, self._status, ev, x, y - TOP))
-
-    def on_key(self, code, pressed):
-        cmd = native.music_on_key(code, pressed)
-        self._send(cmd)
-        return native.music_key_used(cmd)
 
     def key(self, now):
         if self._player is not None:

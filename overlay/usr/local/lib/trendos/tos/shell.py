@@ -12,10 +12,11 @@ import math, select, subprocess, time
 import numpy as np
 
 from .config import (W, H, NPAGES, TOP, TITLE, TITLE_Y, TITLE_H, BAND, ACCENT, GREET_NAME, BLEND,
-                     MAX_FPS, SLEEP_AFTER, LONG_PRESS, KEY_HOME, KEY_BACK, KEY_POWER)
+                     MAX_FPS, SLEEP_AFTER, LONG_PRESS, KEY_HOME, KEY_BACK, KEY_POWER, KEY_VOLDOWN, KEY_VOLUP)
 from .hw.fb import Framebuffer
 from .canvas import text_strip
 from .hw.inputdev import Input
+from .hw import volume
 from .launcher import Launcher, default_entries, utilities_entries
 from .render import MINI, MINI_CW, MINI_CH, draw_view, matrix
 from .stats import StatsPanel
@@ -23,6 +24,10 @@ from .title import TitleAnim
 from . import boot, power
 from .transition import Slide
 from .flight import Flight, badge_angles, carousel_angles
+from .volumebar import VolumeBar, level_at
+
+VOLUME_KEYS = (KEY_VOLDOWN, KEY_VOLUP)
+VOLUME_REPEAT_AFTER, VOLUME_REPEAT_EVERY = 0.4, 0.12    # seconds, holding a volume key
 
 
 class Shell:
@@ -65,6 +70,8 @@ class Shell:
         self.utilities = None                 # built lazily on first open
         self.home_snap = None                # home screen image, to slide back to from utilities
         self.stats = StatsPanel()
+        self.volume_bar = VolumeBar()
+        self.volume_held = None              # (step, when to repeat it) while a volume key is down
         self.title = TitleAnim(TITLE, f"Welcome, {GREET_NAME}")
         self.mode, self.app = "launcher", None
         self.asleep = False
@@ -107,6 +114,8 @@ class Shell:
                 self.power_down_t, self.power_handled = None, True     # ignore this press's release
                 self.repaint_all()
                 return
+            if ev == "key" and code in VOLUME_KEYS:         # turn it down without looking
+                self.on_volume_key(code, val == 1, time.monotonic())
 
     # ---- background apps (alarms) ------------------------------------------------------------
     def run_background(self, now):
@@ -134,6 +143,7 @@ class Shell:
             self.last = now
         self.last_input = now
         self.power_down_t, self.power_handled = None, True
+        self.volume_held = None
         self.menu = None
         if self.app is not None and self.app is not app:
             self.app.on_close()
@@ -164,6 +174,7 @@ class Shell:
         if self.power_down_t is not None and not self.power_handled and now - self.power_down_t >= LONG_PRESS:
             self.power_handled = True
             self.open_power_menu()
+        self.repeat_volume(now)
         self.run_background(now)
         if self.mode == "app" and self.app.keep_awake:
             self.last_input = now
@@ -179,6 +190,9 @@ class Shell:
         blend = min(1.0, (now - self.start) / BLEND)
         blend = blend * blend * (3 - 2 * blend)                       # smoothstep
         buf = self.fb.pages[self.page]
+        if self.volume_bar.leaves(self.page, now):
+            buf[:TOP] = 0                                             # redrawn below
+            self.shown["title"][self.page] = self.shown["full"][self.page] = None
         if self.mode == "power":
             if not self.draw_power_menu(buf, now):
                 return
@@ -193,6 +207,7 @@ class Shell:
             self.draw_title(buf, ("app", self.app.name),
                             lambda: text_strip("‹ " + self.app.name, 28, ACCENT, TITLE_H, x=16))
             self.draw_badge(buf, self.app, now)
+        self.volume_bar.draw(buf, self.page, now)
         self.fb.show(self.page)
         self.page = (self.page + 1) % NPAGES
         self.count_fps()
@@ -257,6 +272,13 @@ class Shell:
             buf[:] = 0
             self.shown["base"][self.page] = base
 
+    def screen_picture(self):
+        """A copy of what's on screen, to slide away or put behind a menu. Taking one means the
+        screen is about to change, so the volume bar goes."""
+        picture = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        self.volume_bar.hide(picture)
+        return picture
+
     def carousel_frame(self, carousel, title_text, now, skip_current=False):
         """Full-screen image of a carousel (title + its band) for slide transitions. The home
         greeting is centred (matching the live home title); sub-menu titles are left-aligned
@@ -311,7 +333,7 @@ class Shell:
     def open_app(self, app, entry=None):
         """Slide the app in; its launcher object (entry) flies up into the title-bar badge."""
         now = time.monotonic()
-        snap = self.fb.pages[(self.page - 1) % NPAGES].copy()          # screen we came from
+        snap = self.screen_picture()                                   # screen we came from
         self.flight = None
         if entry is not None and app.icon_shape is not None:
             self.flight = Flight(app.icon_shape, lambda: carousel_angles(entry))
@@ -327,7 +349,7 @@ class Shell:
         now = time.monotonic()
         if self.utilities is None:
             self.utilities = Launcher(utilities_entries(), now, is_home=False)
-        self.home_snap = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        self.home_snap = self.screen_picture()
         self.launcher = self.utilities; self.carousel_is_home = False
         self.launcher.invalidate()
         self.start_transition(self.home_snap, self.carousel_frame(self.utilities, "\u2039 Utilities", now),
@@ -335,7 +357,7 @@ class Shell:
                               live_title="\u2039 Utilities")
 
     def close_utilities(self):
-        front = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        front = self.screen_picture()
         if self.utilities is not None:
             self.utilities.reset_position()
         self.launcher = self.home; self.carousel_is_home = True
@@ -350,7 +372,7 @@ class Shell:
         if self.carousel_is_home and self.app is None:
             self.launcher.on_home(now)            # already home: just re-centre
             return
-        front = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        front = self.screen_picture()
         if self.utilities is not None:
             self.utilities.reset_position()
         if self.app is not None:
@@ -365,7 +387,7 @@ class Shell:
 
     def close_app(self):
         """Slide the app out; the badge flies back down into its place in the carousel."""
-        visible = self.fb.pages[(self.page - 1) % NPAGES].copy()
+        visible = self.screen_picture()
         back = self.launcher_snap if self.launcher_snap is not None else np.zeros_like(visible)
         title = "Welcome, " + GREET_NAME if self.carousel_is_home else "\u2039 Utilities"
         fl, self.flight = self.flight, None
@@ -393,6 +415,16 @@ class Shell:
     def handle(self, ev, now):
         kind, x, y, t = ev
         self.last_input = now
+        if self.mode != "halt":
+            if kind == "key" and x in VOLUME_KEYS:
+                if self.mode == "app" and self.app.wants_volume_keys():
+                    self.volume_held = None
+                    self.app.on_key(x, y == 1)
+                else:
+                    self.on_volume_key(x, y == 1, now)
+                return
+            if kind != "key" and self.on_volume_touch(kind, x, y, now):
+                return
         if kind == "key" and x == KEY_POWER:
             self.on_power_key(y, now)
         elif self.mode == "power":
@@ -418,6 +450,41 @@ class Shell:
                     elif en.opens == "utilities":
                         self.open_utilities()
 
+    def on_volume_key(self, code, pressed, now):
+        self.volume_held = None
+        if pressed:
+            step = 1 if code == KEY_VOLUP else -1
+            self.volume_held = (step, now + VOLUME_REPEAT_AFTER)
+            self.change_volume(step, now)
+
+    def repeat_volume(self, now):
+        if self.volume_held is not None and now >= self.volume_held[1]:
+            step = self.volume_held[0]
+            self.volume_held = (step, now + VOLUME_REPEAT_EVERY)
+            self.change_volume(step, now)
+            self.last_input = now
+
+    def change_volume(self, step, now):
+        volume.change(step)
+        if not self.asleep:
+            self.show_volume_bar(now)
+
+    def show_volume_bar(self, now):
+        self.volume_bar.show(now, self.fb.pages[(self.page - 1) % NPAGES])
+
+    def on_volume_touch(self, kind, x, y, now):
+        """Touches on the volume bar set the volume. True if the touch was the bar's."""
+        bar = self.volume_bar
+        if kind == "down" and y < TOP and bar.visible(now):
+            bar.dragging = True
+        if not bar.dragging:
+            return False
+        volume.set_level(level_at(x))
+        self.show_volume_bar(now)
+        if kind == "up":
+            bar.dragging = False
+        return True
+
     def on_power_key(self, pressed, now):
         """Short press: screen off. Long press (handled in frame()): power menu."""
         if pressed:
@@ -439,7 +506,7 @@ class Shell:
 
     def open_power_menu(self):
         if self.mode in ("launcher", "app"):
-            visible = self.fb.pages[(self.page - 1) % NPAGES].copy()      # what is on screen now
+            visible = self.screen_picture()                                # what is on screen now
             if self.mode == "launcher" and self.launcher.busy:
                 self.launcher.reset_position()
             self.prev_mode, self.mode = self.mode, "power"

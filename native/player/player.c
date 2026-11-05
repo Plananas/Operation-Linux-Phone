@@ -654,7 +654,7 @@ void tr_player_command(tr_player *p, tr_music_cmd cmd)
 	case TR_CMD_SEEK: p->want_seek = cmd.arg; break;
 	case TR_CMD_RESCAN: p->want_rescan = 1; break;
 	case TR_CMD_VOLUME:
-		p->status.volume = tr_clamp(p->status.volume + cmd.arg, 0, TR_MUSIC_VOLUME_MAX);
+		p->status.volume = tr_clamp(cmd.arg, 0, TR_MUSIC_VOLUME_MAX);
 		break;
 	case TR_CMD_RELEASE: {
 		const unsigned asked = ++p->pauses_asked;
